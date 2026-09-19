@@ -1,0 +1,23 @@
+{
+  "name": "metacom-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Join a coding agent (claude, codex, any terminal program) to the metacom hub: room, directed messages, status, MCP tools.",
+  "bin": {
+    "metacom": "bin/metacom.js",
+    "mc": "bin/mc.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-pty.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@xterm/headless": "^6.0.0",
+    "metacom": "file:../metacom",
+    "node-pty": "^1.1.0",
+    "zod": "^3.24.0"
+  }
+}
