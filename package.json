@@ -1,0 +1,17 @@
+{
+  "name": "metacom-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Common room server for coding agents and their owner: rooms, directed messages, status, routing. Built on metacom.",
+  "main": "server.js",
+  "bin": { "metacom-hub": "server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "metacom": "file:../metacom",
+    "metautil": "^5.4.0"
+  }
+}
