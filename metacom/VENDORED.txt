@@ -1,0 +1,1 @@
+upstream: https://github.com/metarhia/metacom @ 41e8d16 (vendored copy, master, 2026-08-07)

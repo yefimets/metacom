@@ -1,0 +1,102 @@
+'use strict';
+
+const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+const { z } = require('zod');
+const { connect } = require('./client.js');
+const { line, member } = require('./format.js');
+
+const text = (value) => ({ content: [{ type: 'text', text: value }] });
+
+/// stdio MCP server spawned by the agent (claude --mcp-config). It joins the hub as the same
+/// member as the wrapper, so the agent can read and post in its room while it works.
+const serveMcp = async (config) => {
+  const name = process.env.MC_AGENT;
+  const room = process.env.MC_ROOM || config.room;
+  if (!name) throw new Error('MC_AGENT is not set; `metacom mcp` is started by the wrapper');
+  const token = config.agentToken || config.token;
+  const hub = await connect({ url: config.url, token, onOpen: () => hub.api.agents.register({ name, room }) });
+  await hub.api.agents.register({ name, room });
+
+  const waiters = new Set();
+  const onMessage = (msg) => {
+    if (msg.from.name === name) return;
+    for (const w of waiters) w(msg);
+  };
+  hub.api.room.on('message', onMessage);
+
+  const server = new McpServer({ name: 'metacom-hub', version: '0.1.0' });
+
+  server.tool('hub_agents', 'List the agents and humans on the hub with status (working, waiting, stopped), room, host and repo.', {}, async () => {
+    const list = await hub.api.agents.list({});
+    return text(list.map(member).join('\n') || 'nobody');
+  });
+
+  server.tool(
+    'hub_read',
+    `Read the last messages of room "${room}": what the owner and other agents said, and directed messages.`,
+    { limit: z.number().int().min(1).max(200).optional().describe('How many, default 30') },
+    async ({ limit }) => {
+      const list = await hub.api.room.history({ room, limit: limit || 30 });
+      return text(list.map(line).join('\n') || '(empty)');
+    },
+  );
+
+  server.tool(
+    'hub_say',
+    'Post a short message to the room. Everyone in the room and the owner see it. Use it to report an outcome or a decision that affects others.',
+    { text: z.string().min(1).max(16000) },
+    async ({ text: body }) => {
+      const msg = await hub.api.room.say({ room, text: body });
+      return text(`posted ${msg.id}`);
+    },
+  );
+
+  server.tool(
+    'hub_send',
+    'Send a directed message to another agent by name. kind "info" (default) is for their next read; kind "command" is typed into their terminal only if that agent accepts commands from agents.',
+    { to: z.string(), text: z.string().min(1).max(16000), kind: z.enum(['info', 'command']).optional() },
+    async ({ to, text: body, kind }) => {
+      const result = await hub.api.agents.send({ to, text: body, kind: kind || 'info' });
+      return text(result.delivered ? `delivered to ${result.to}` : `${result.to} is offline, queued`);
+    },
+  );
+
+  server.tool(
+    'hub_wait',
+    'Wait for the next message in the room from someone else (up to `seconds`, default 60). Returns it, or "timeout".',
+    { seconds: z.number().int().min(1).max(600).optional() },
+    async ({ seconds }) =>
+      new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          waiters.delete(waiter);
+          resolve(text('timeout'));
+        }, (seconds || 60) * 1000);
+        const waiter = (msg) => {
+          clearTimeout(timer);
+          waiters.delete(waiter);
+          resolve(text(line(msg)));
+        };
+        waiters.add(waiter);
+      }),
+  );
+
+  server.tool(
+    'hub_wait_agent',
+    'Wait until another agent is ready (waiting, blocked or stopped), for up to `seconds` (default 120). Returns its status. Use after hub_send to collect a result.',
+    { name: z.string(), seconds: z.number().int().min(1).max(600).optional() },
+    async ({ name: who, seconds }) => {
+      const r = await hub.api.agents.wait({ name: who, timeoutMs: (seconds || 120) * 1000 });
+      return text(r.timeout ? `timeout, ${who} is still ${r.status}` : `${who} is ${r.status}${r.reason ? ' (' + r.reason + ')' : ''}`);
+    },
+  );
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  process.stdin.on('close', () => {
+    hub.m.close();
+    process.exit(0);
+  });
+};
+
+module.exports = { serveMcp };

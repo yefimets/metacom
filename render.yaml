@@ -1,0 +1,27 @@
+# Render Blueprint: one web service running the hub from hub/Dockerfile.
+# Render terminates TLS and proxies WebSockets, so agents use wss://<service>.onrender.com/
+# (or the custom domain). Without a paid disk the data directory is ephemeral, which is why
+# the owner and agent tokens come from environment variables (set them in the dashboard).
+services:
+  - type: web
+    name: metacom-hub
+    runtime: docker
+    dockerfilePath: ./hub/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: HUB_HOST
+        value: 0.0.0.0
+      - key: HUB_PORT
+        value: 10000
+      - key: HUB_DATA
+        value: /data
+      - key: HUB_OWNER_TOKEN
+        sync: false
+      - key: HUB_AGENT_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: HUB_ROUTER_MODEL
+        value: google/gemini-2.5-flash

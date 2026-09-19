@@ -1,0 +1,411 @@
+'use strict';
+
+const http = require('node:http');
+const timers = require('node:timers/promises');
+const { Blob } = require('node:buffer');
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { randomUUID } = require('node:crypto');
+
+const metautil = require('metautil');
+const { WebsocketServer } = require('#ws');
+const { Metacom } = require('../lib/metacom.js');
+const { chunkEncode, chunkDecode } = require('../lib/chunks.js');
+
+const { emitWarning } = process;
+process.emitWarning = (warning, type, ...args) => {
+  if (type === 'ExperimentalWarning') return;
+  emitWarning(warning, type, ...args);
+};
+
+const createWsServer = () => {
+  const httpServer = http.createServer();
+  const wsServer = new WebsocketServer({ server: httpServer });
+  return { httpServer, wsServer };
+};
+
+const listen = (httpServer, port) =>
+  new Promise((resolve, reject) => {
+    httpServer.listen(port, (error) => (error ? reject(error) : resolve()));
+  });
+
+test('Client / calls', async (t) => {
+  const api = {
+    system: {
+      introspect: { handler: async () => api },
+    },
+    test: {
+      test: {
+        handler: async () => {
+          await timers.setTimeout(10);
+          return { success: true };
+        },
+      },
+      timeout: {
+        handler: async () => {
+          await timers.setTimeout(350);
+          return { success: true };
+        },
+      },
+      error: {
+        handler: async () => {
+          throw new Error('Error message');
+        },
+      },
+    },
+  };
+
+  let serverWs = null;
+  const { httpServer, wsServer: mockServer } = createWsServer();
+  await listen(httpServer, 8000);
+  mockServer.on('connection', (ws) => {
+    serverWs = ws;
+    ws.on('message', async (raw) => {
+      const packet = metautil.jsonParse(raw.toString()) || {};
+      const { type, id, method } = packet;
+      const [unit, name] = method.split('/');
+      if (type !== 'call') return;
+      try {
+        const result = await api[unit][name].handler();
+        ws.send(JSON.stringify({ type: 'callback', id, result }));
+      } catch ({ message }) {
+        const packet = { type: 'callback', id, error: { code: 400, message } };
+        ws.send(JSON.stringify(packet));
+      }
+    });
+  });
+
+  let client;
+
+  t.after(() => void httpServer.close());
+
+  t.beforeEach(async () => {
+    const options = { callTimeout: 300 };
+    client = await Metacom.connect('ws://localhost:8000/', options);
+    await client.load('test');
+  });
+
+  t.afterEach(() => void client.close());
+
+  await t.test('handles simple api calls', async () => {
+    const result = await client.api.test.test();
+    assert.deepStrictEqual(result, { success: true });
+  });
+
+  await t.test('handles parallel api calls', async () => {
+    const promises = [];
+    for (let i = 0; i < 10; i++) promises.push(client.api.test.test());
+    const res = await Promise.all(promises);
+    for (const r of res) assert.deepStrictEqual(r, { success: true });
+  });
+
+  await t.test('handles call timeouts', async () => {
+    const promise = client.api.test.timeout();
+    await assert.rejects(promise, new Error('Request timeout'));
+  });
+
+  await t.test('handles api errors', async () => {
+    await assert.rejects(
+      client.api.test.error(),
+      (error) => error.message === 'Error message' && error.code === 400,
+    );
+  });
+
+  await t.test('emits error when server sends invalid JSON', async () => {
+    const errorPromise = new Promise((resolve) => {
+      client.once('error', resolve);
+    });
+    assert.ok(serverWs, 'expected WebSocket connection from mock server');
+    serverWs.send('not json');
+    const error = await errorPromise;
+    assert.match(error.message, /Invalid JSON packet/);
+  });
+});
+
+test('Client / stale callback', async (t) => {
+  const api = {
+    system: {
+      introspect: { handler: async () => api },
+    },
+    test: {
+      test: {
+        handler: async () => {
+          await timers.setTimeout(10);
+          return { success: true };
+        },
+      },
+    },
+  };
+
+  const { httpServer, wsServer: mockServer } = createWsServer();
+  await listen(httpServer, 8010);
+  mockServer.on('connection', (ws) => {
+    ws.on('message', async (raw) => {
+      const packet = metautil.jsonParse(raw.toString()) || {};
+      const { type, id, method } = packet;
+      const [unit, name] = method?.split('/') || [];
+      if (type !== 'call') return;
+      try {
+        const handler = api[unit]?.[name]?.handler;
+        const result = (handler ? await handler() : undefined) ?? { ok: true };
+        ws.send(JSON.stringify({ type: 'callback', id, result }));
+        ws.send(
+          JSON.stringify({
+            type: 'callback',
+            id: 'stale-id-not-in-calls',
+            result: null,
+          }),
+        );
+      } catch ({ message }) {
+        const errPacket = {
+          type: 'callback',
+          id,
+          error: { code: 400, message },
+        };
+        ws.send(JSON.stringify(errPacket));
+      }
+    });
+  });
+
+  t.after(() => void httpServer.close());
+
+  await t.test('throws on stale callback for unknown id', async () => {
+    const client = await Metacom.connect('ws://localhost:8010/');
+    const promise1 = new Promise((resolve) => {
+      client.once('error', (error) => {
+        assert.match(error.message, /Callback stale-id-not-in-calls not found/);
+        resolve(error);
+      });
+      client.on('error', () => {});
+    });
+    const promise2 = new Promise((resolve) => client.once('error', resolve));
+    await client.load('test');
+    const result = await client.api.test.test();
+    assert.deepStrictEqual(result, { success: true });
+    const error = await promise1;
+    assert.match(error.message, /Callback stale-id-not-in-calls not found/);
+    const error2 = await promise2;
+    assert.match(error2.message, /Callback stale-id-not-in-calls not found/);
+    client.close();
+  });
+});
+
+test('Client / events', async (t) => {
+  const api = {
+    system: {
+      introspect: { handler: async () => api },
+    },
+    test: {
+      echo: {
+        handler: async () => {
+          await timers.setTimeout(10);
+          return { success: true };
+        },
+      },
+    },
+  };
+
+  const { httpServer, wsServer: mockServer } = createWsServer();
+  await listen(httpServer, 8001);
+  mockServer.on('connection', (ws) => {
+    const pingInterval = setInterval(() => {
+      const packet = { type: 'event', name: 'test/ping', data: { ping: true } };
+      ws.send(JSON.stringify(packet));
+    }, 100);
+    ws.on('close', () => void clearInterval(pingInterval));
+    ws.on('message', async (raw) => {
+      const packet = metautil.jsonParse(raw.toString()) || {};
+      if (packet.type === 'call' && packet.method === 'system/introspect') {
+        const introspection = { type: 'callback', id: packet.id, result: api };
+        ws.send(JSON.stringify(introspection));
+        return;
+      }
+      const { type, name, data } = packet;
+      if (type !== 'event') return;
+      const [unit, event] = name.split('/');
+      const result = await api[unit][event].handler(data);
+      ws.send(JSON.stringify({ type: 'event', name, data: result }));
+    });
+  });
+
+  let client;
+
+  t.after(() => void httpServer.close());
+
+  t.beforeEach(async () => {
+    client = await Metacom.connect('ws://localhost:8001/');
+    await client.load('test');
+  });
+
+  t.afterEach(() => void client.close());
+
+  await t.test('handles events from server', async () => {
+    const ping = await new Promise((resolve) =>
+      client.api.test.on('ping', resolve),
+    );
+    assert.deepStrictEqual(ping, { ping: true });
+  });
+});
+
+test('Client / stream', async (t) => {
+  const storage = new Map();
+
+  const handleBinary = (chunk) => {
+    const { id, payload } = chunkDecode(chunk);
+    const stream = storage.get(id);
+    if (!stream) return;
+    const stringChunk = Buffer.from(payload).toString('utf8');
+    stream.data.push(stringChunk);
+  };
+
+  const handleOutgoingStream = async (ws, { id, name, blob }) => {
+    const initPacket = { type: 'stream', id, name, size: blob.size };
+    const endPacket = { type: 'stream', id, status: 'end' };
+    ws.send(JSON.stringify(initPacket));
+    const reader = blob.stream().getReader();
+    let chunk;
+    while (!(chunk = await reader.read()).done) {
+      ws.sendBinary(Buffer.from(chunkEncode(id, chunk.value)));
+    }
+    ws.send(JSON.stringify(endPacket));
+  };
+
+  const handleIncomingStream = ({ id, name, size, status }) => {
+    const stream = storage.get(id);
+    if (status) {
+      if (!stream) throw new Error(`Stream ${id} is not initialized`);
+      if (status === 'end') stream.status = 'ended';
+      if (status === 'terminate') stream.status = 'terminated';
+      return;
+    }
+    const valid = typeof name === 'string' && Number.isSafeInteger(size);
+    if (!valid) throw new Error('Stream packet structure error');
+    if (stream) throw new Error(`Stream ${id} is already initialized`);
+    {
+      const stream = { name, size, data: [], status: 'init' };
+      storage.set(id, stream);
+    }
+  };
+
+  const api = {
+    system: {
+      introspect: { handler: async () => api },
+    },
+    test: {
+      getStreamData: {
+        handler: async ({ id }) => storage.get(id),
+      },
+      download: {
+        handler: async ({ name }, ws) => {
+          const id = randomUUID();
+          const data = 'Some random data for upload to the client';
+          const blob = new Blob([data]);
+          handleOutgoingStream(ws, { id, name, blob });
+          return { id };
+        },
+      },
+    },
+  };
+
+  const { httpServer, wsServer: mockServer } = createWsServer();
+  await listen(httpServer, 8002);
+  mockServer.on('connection', (ws) => {
+    const pingInterval = setInterval(() => {
+      const packet = { type: 'event', name: 'test/ping', data: { ping: true } };
+      ws.send(JSON.stringify(packet));
+    }, 100);
+    ws.on('close', () => void clearInterval(pingInterval));
+    ws.on('message', async (raw, isBinary) => {
+      if (isBinary) return void handleBinary(new Uint8Array(raw));
+      const packet = metautil.jsonParse(raw.toString()) || {};
+      if (packet.type === 'call' && packet.method === 'system/introspect') {
+        const introspection = { type: 'callback', id: packet.id, result: api };
+        return void ws.send(JSON.stringify(introspection));
+      }
+      if (packet.type === 'stream') return void handleIncomingStream(packet);
+      const { type, id, method, args } = packet;
+      const [unit, name] = method.split('/');
+      if (type !== 'call') return;
+      const result = await api[unit][name].handler(args, ws);
+      ws.send(JSON.stringify({ type: 'callback', id, result }));
+    });
+  });
+
+  let client;
+
+  t.after(() => void httpServer.close());
+
+  t.beforeEach(async () => {
+    client = await Metacom.connect('ws://localhost:8002/');
+    await client.load('test');
+  });
+
+  t.afterEach(() => void client.close());
+
+  await t.test('handles file uploads', async () => {
+    const data = 'Some random data for upload to the server';
+    const name = 'upload-stream';
+    const blob = new Blob([data]);
+    blob.name = name;
+    const stream = client.createBlobUploader(blob);
+    await stream.upload();
+    const uploadedFile = await client.api.test.getStreamData({ id: stream.id });
+    assert.strictEqual(uploadedFile.name, name);
+    assert.strictEqual(uploadedFile.size, blob.size);
+    assert.strictEqual(uploadedFile.data.join(''), data);
+    assert.strictEqual(uploadedFile.status, 'ended');
+  });
+
+  await t.test('handles file downloads', async () => {
+    const name = 'download-stream';
+    const { id } = await client.api.test.download({ name });
+    const readable = client.getStream(id);
+    const blob = await readable.toBlob();
+    const data = await blob.text();
+    assert.strictEqual(data, 'Some random data for upload to the client');
+  });
+});
+
+test('Client / different ID generation strategies', async (t) => {
+  const api = {
+    system: {
+      introspect: { handler: async () => api },
+    },
+    test: {
+      test: {
+        handler: async () => {
+          await timers.setTimeout(10);
+          return { success: true };
+        },
+      },
+    },
+  };
+
+  const { httpServer, wsServer: mockServer } = createWsServer();
+  await listen(httpServer, 8004);
+  mockServer.on('connection', (ws) => {
+    ws.on('message', async (raw) => {
+      const packet = metautil.jsonParse(raw.toString()) || {};
+      const { type, id, method } = packet;
+      const [unit, name] = method.split('/');
+      if (type !== 'call') return;
+      try {
+        const result = await api[unit][name].handler();
+        ws.send(JSON.stringify({ type: 'callback', id, result }));
+      } catch ({ message }) {
+        const packet = { type: 'callback', id, error: { code: 400, message } };
+        ws.send(JSON.stringify(packet));
+      }
+    });
+  });
+
+  t.after(() => void httpServer.close());
+
+  await t.test('works with UUID generation', async () => {
+    const client = await Metacom.connect('ws://localhost:8004/');
+    await client.load('test');
+    const result = await client.api.test.test();
+    assert.deepStrictEqual(result, { success: true });
+    client.close();
+  });
+});
