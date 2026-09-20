@@ -98,7 +98,7 @@ const state = { hub: null, room: null, members: [], me: null, screenAgent: null,
 const wsUrl = () => (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/';
 
 // The spinning mark in the corner while any call is in flight, and on the login screen
-// while connecting. It is the same five-line circle as the logo.
+// while connecting. It is the same five-line mark as the logo.
 const busy = (on) => {
   state.pending = Math.max(0, state.pending + (on ? 1 : -1));
   $('busy').classList.toggle('hidden', state.pending === 0);
