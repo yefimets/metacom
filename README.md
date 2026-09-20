@@ -1,4 +1,4 @@
-# metacom hub
+# metacom
 
 One place where your coding agents meet: Claude Code and Codex on this Mac, an agent on a
 VPS, Flow's voice assistant, and you from a phone. Built on [metacom](metacom/) (the
@@ -17,7 +17,7 @@ Directories:
 | Path | What |
 | --- | --- |
 | `metacom/` | clean upstream clone of metarhia/metacom (master, tests pass) |
-| `hub/` | the server: auth, rooms, agents, routing, phone web client, Docker/Caddy deploy |
+| `hub/` | the server: auth, rooms, agents, routing, phone web client (`hub/web`), Docker/Caddy deploy |
 | `cli/` | `metacom` command (alias `mc`): joins an agent or you to the hub; `cli/src/chat/` is the terminal chat (Ink + termcn) |
 
 ## How it works
@@ -141,10 +141,41 @@ typing into a terminal.
 ### Phone
 
 Open the hub URL in Safari, paste the owner token once (it stays in that browser), add to
-home screen. Agents with status (red when blocked on a question, green badge when done), the
-room stream, a composer with *auto* / *room* / agent targets, and a *screen* button per agent
-that shows its terminal with Enter / Esc / y / arrows / Cancel keys to answer it. On this Mac that is `http://127.0.0.1:8900/`; from a phone use the VPS address or
-Tailscale below.
+home screen. The client (`hub/web`, no build step) is black and white, zero radius: white
+block buttons, terminal inputs with a `>` prompt, and the mark, five lines meeting in the
+centre of a circle, is the logo and, spinning, the loader (header while reconnecting, corner
+while a call is in flight, inside an agent card while it works). Agents with status (inverted
+card when blocked on a question, *done* tag when a turn finished), the room stream, a composer
+with *auto* / *room* / agent targets, and a *screen* button per agent that shows its terminal
+with Enter / Esc / y / arrows / Cancel keys and a `>` field that types into it. Long-press the
+logo to forget the token. On this Mac that is `http://127.0.0.1:8900/`; from a phone use the
+tunnel below.
+
+## Hub on the Hetzner VM (done)
+
+The Ubuntu 24.04 box (`ssh hetzner`, user `misha`) runs a second hub and exposes it with a
+[Cloudflare quick tunnel](https://try.cloudflare.com/), so the phone reaches it over `https`
+/ `wss` without any open port or DNS. The repo is cloned at `~/metacom` on the VM (deploy key,
+read/write), `metacom` is installed globally, and git and Claude Code are there for an agent.
+
+```bash
+ssh misha@95.217.150.253
+metacom-tunnel                         # current https://….trycloudflare.com URL
+cat ~/.config/metacom-hub/owner-token.txt   # owner token for the phone (mode 600)
+sudo systemctl status metacom-hub metacom-tunnel
+sudo journalctl -u metacom-hub -f
+cd ~/metacom && git pull && sudo systemctl restart metacom-hub   # deploy
+claude                                 # first run: log in, then: metacom dev -n Hetzner claude
+```
+
+Services: `metacom-hub.service` (node, user misha, `127.0.0.1:8900`, env from
+`~/.config/metacom-hub/hub.env`) and `metacom-tunnel.service` (`cloudflared tunnel --url
+http://127.0.0.1:8900`, HTTP/2 over IPv4: QUIC and IPv6 to the Cloudflare edge do not work from
+this box). A quick tunnel gets a new random URL every time the service restarts, and the
+web client keeps its token per origin, so after a restart paste the token again at the new
+URL. For a stable address create a named tunnel on a Cloudflare account (`cloudflared tunnel
+login`, `cloudflared tunnel create metacom`, route a hostname) and put it in the unit instead.
+The VM's own `metacom` CLI is logged in to that hub (owner + agent token `hetzner`).
 
 ## An agent on a VPS
 
