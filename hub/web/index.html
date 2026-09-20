@@ -2,79 +2,214 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<title>Agent Hub</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="metacom">
+<title>metacom</title>
 <link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-180.png">
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --fg:#111; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --ok:#16a34a; --busy:#d97706; --off:#9ca3af; --me:#dbeafe; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#181b22; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --accent:#60a5fa; --me:#1e3a5f; } }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 -apple-system, system-ui, sans-serif; height:100dvh; display:flex; flex-direction:column; }
-  header { padding: max(10px, env(safe-area-inset-top)) 14px 8px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--line); background:var(--card); }
-  header h1 { font-size:16px; margin:0; flex:1; }
-  #dot { width:10px; height:10px; border-radius:50%; background:var(--off); }
-  #dot.on { background:var(--ok); }
-  select, button, textarea, input { font:inherit; color:inherit; }
-  #room { background:transparent; border:1px solid var(--line); border-radius:8px; padding:4px 8px; }
-  #agents { display:flex; gap:8px; overflow-x:auto; padding:10px 14px; scrollbar-width:none; }
-  .agent { flex:0 0 auto; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 12px; min-width:120px; }
-  .agent b { display:flex; align-items:center; gap:6px; }
-  .agent i { width:8px; height:8px; border-radius:50%; background:var(--off); display:inline-block; }
-  .agent.waiting i { background:var(--ok); } .agent.working i { background:var(--busy); } .agent.starting i { background:var(--accent); }
-  .agent.blocked { border-color:#dc2626; } .agent.blocked i { background:#dc2626; }
-  .agent.done { border-color:var(--ok); }
-  .agent em { font-style:normal; font-size:11px; color:#fff; background:#dc2626; border-radius:6px; padding:0 6px; margin-left:auto; }
-  .agent.done em { background:var(--ok); }
-  .agent button { margin-top:6px; font-size:12px; border:1px solid var(--line); background:transparent; border-radius:8px; padding:2px 8px; }
-  #screen { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; }
-  #screen header { justify-content:space-between; }
-  #screen pre { flex:1; margin:0; padding:12px 14px; overflow:auto; font:12px/1.35 ui-monospace, Menlo, monospace; white-space:pre-wrap; word-break:break-all; }
-  #screen .keys { display:flex; gap:6px; padding:8px 14px max(8px, env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--card); overflow-x:auto; }
-  #screen .keys button { border:1px solid var(--line); background:transparent; border-radius:8px; padding:6px 10px; white-space:nowrap; }
-  .msg.system { background:transparent; border:0; color:var(--muted); font-size:12px; align-self:center; }
-  .agent small { color:var(--muted); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
-  #stream { flex:1; overflow-y:auto; padding:6px 14px 12px; display:flex; flex-direction:column; gap:6px; }
-  .msg { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 12px; max-width:92%; align-self:flex-start; white-space:pre-wrap; word-break:break-word; }
-  .msg.mine { background:var(--me); align-self:flex-end; }
-  .msg .meta { color:var(--muted); font-size:12px; margin-bottom:2px; }
-  .msg .meta .to { color:var(--accent); }
-  form { display:flex; gap:8px; padding:10px 14px max(10px, env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--card); }
-  #target { max-width:38%; background:transparent; border:1px solid var(--line); border-radius:10px; padding:6px 8px; }
-  #text { flex:1; resize:none; border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:transparent; min-height:40px; max-height:120px; }
-  #send { border:0; background:var(--accent); color:#fff; border-radius:10px; padding:0 14px; }
-  #login { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; justify-content:center; padding:24px; gap:12px; }
-  #login input { padding:10px; border:1px solid var(--line); border-radius:10px; background:var(--card); }
-  #login button { padding:10px; border:0; border-radius:10px; background:var(--accent); color:#fff; }
-  #login p { color:var(--muted); font-size:13px; }
-  .hidden { display:none !important; }
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --dim: #888;
+    --faint: #333;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; border-radius: 0 !important; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 var(--mono);
+    height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  ::selection { background: var(--fg); color: var(--bg); }
+  button, input, select, textarea { font: inherit; color: inherit; background: transparent; border: 0; outline: 0; margin: 0; }
+  button { cursor: pointer; }
+
+  /* logo: five lines meeting in the centre of a circle. .spin makes it the loader. */
+  .logo { width: 28px; height: 28px; display: block; flex: 0 0 auto; stroke: currentColor; fill: none; stroke-width: 6; stroke-linecap: butt; }
+  #logo-def { position: absolute; width: 0; height: 0; overflow: hidden; }
+  .spin { animation: spin 1.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* buttons: white block, black text, uppercase */
+  .btn {
+    background: var(--fg); color: var(--bg); border: 1px solid var(--fg);
+    padding: 0 12px; height: 36px; line-height: 34px; text-transform: uppercase; letter-spacing: .04em;
+    font-size: 12px; white-space: nowrap; user-select: none;
+  }
+  .btn:active { background: var(--bg); color: var(--fg); }
+  .btn:disabled { opacity: .35; }
+  .btn.ghost { background: var(--bg); color: var(--fg); }
+  .btn.ghost:active { background: var(--fg); color: var(--bg); }
+
+  /* terminal inputs: black, white border, prompt glyph in front */
+  .field { display: flex; align-items: stretch; border: 1px solid var(--fg); background: var(--bg); min-width: 0; }
+  .field > .prompt { padding: 0 0 0 10px; display: flex; align-items: center; color: var(--fg); user-select: none; }
+  .field > input, .field > textarea, .field > select { flex: 1; min-width: 0; padding: 8px 10px; caret-color: var(--fg); }
+  .field > textarea { resize: none; line-height: 1.4; max-height: 40dvh; }
+  .field > input::placeholder, .field > textarea::placeholder { color: var(--faint); }
+  .field > select { appearance: none; -webkit-appearance: none; padding-right: 26px; }
+  .field.select { position: relative; }
+  .field.select::after { content: "v"; position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--dim); pointer-events: none; font-size: 11px; }
+  .field:focus-within { box-shadow: inset 0 0 0 1px var(--fg); }
+
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+    border-bottom: 1px solid var(--fg);
+  }
+  header .title { font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 13px; }
+  header .spacer { flex: 1; }
+  header #state { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  header #state.on { color: var(--fg); }
+  header .field { height: 32px; }
+  header .field > select { padding: 0 26px 0 8px; font-size: 12px; text-transform: uppercase; }
+
+  /* agent strip */
+  #agents { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--fg); flex: 0 0 auto; }
+  #agents::-webkit-scrollbar { display: none; }
+  #agents:empty { display: none; }
+  .agent {
+    flex: 0 0 auto; min-width: 132px; max-width: 200px; padding: 10px 12px; border-right: 1px solid var(--fg);
+    display: flex; flex-direction: column; gap: 4px; position: relative;
+  }
+  .agent .name { display: flex; align-items: center; gap: 7px; font-weight: 700; letter-spacing: .02em; }
+  .agent .glyph { width: 12px; height: 12px; display: inline-block; flex: 0 0 auto; }
+  .agent .glyph .logo { width: 12px; height: 12px; }
+  .agent .glyph.idle { border: 1px solid var(--fg); }
+  .agent .glyph.waiting { background: var(--fg); }
+  .agent .glyph.stopped { border: 1px solid var(--faint); }
+  .agent .glyph.starting { border: 1px dashed var(--fg); }
+  .agent .meta { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent .tag { position: absolute; top: 0; right: 0; font-size: 10px; padding: 1px 5px; text-transform: uppercase; letter-spacing: .06em; background: var(--fg); color: var(--bg); }
+  .agent.blocked { background: var(--fg); color: var(--bg); }
+  .agent.blocked .meta { color: #444; }
+  .agent.blocked .glyph { background: var(--bg); border: 0; }
+  .agent.blocked .tag { background: var(--bg); color: var(--fg); }
+  .agent.stopped { color: var(--dim); }
+  .agent .row { display: flex; gap: 6px; margin-top: 4px; }
+  .agent .row .btn { height: 26px; line-height: 24px; padding: 0 8px; font-size: 10px; }
+  .agent.blocked .row .btn { background: var(--bg); color: var(--fg); border-color: var(--bg); }
+  .agent.selected { box-shadow: inset 0 -3px 0 0 var(--fg); }
+  .agent.blocked.selected { box-shadow: inset 0 -3px 0 0 var(--bg); }
+
+  /* stream */
+  #stream { flex: 1; overflow-y: auto; padding: 8px 16px 12px; display: flex; flex-direction: column; gap: 2px; overscroll-behavior: contain; }
+  .msg { white-space: pre-wrap; word-break: break-word; padding: 3px 0; }
+  .msg .meta { color: var(--dim); font-size: 11px; }
+  .msg .meta .from { color: var(--fg); }
+  .msg .meta .to::before { content: " > "; color: var(--dim); }
+  .msg .meta .to { color: var(--fg); }
+  .msg .meta .kind { color: var(--dim); }
+  .msg.mine { border-left: 2px solid var(--fg); padding-left: 10px; }
+  .msg.system { color: var(--dim); font-size: 11px; }
+  .msg.system::before { content: "-- "; }
+  #stream .empty { color: var(--faint); margin: auto; text-align: center; }
+
+  /* composer */
+  #composer { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px); border-top: 1px solid var(--fg); }
+  #composer .line { display: flex; gap: 8px; align-items: stretch; }
+  #composer .field.select { flex: 0 0 auto; max-width: 42%; }
+  #composer .field.select > select { text-transform: uppercase; font-size: 12px; }
+  #composer .field.text { flex: 1; }
+  #composer #send { flex: 0 0 auto; height: auto; min-height: 36px; }
+
+  /* overlays */
+  .overlay { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; z-index: 10; }
+  .hidden { display: none !important; }
+  #screen pre {
+    flex: 1; margin: 0; padding: 12px 16px; overflow: auto; font-size: 11px; line-height: 1.35;
+    white-space: pre-wrap; word-break: break-all; color: var(--fg);
+  }
+  #screen .keys { display: flex; gap: 8px; padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px); border-top: 1px solid var(--fg); overflow-x: auto; scrollbar-width: none; }
+  #screen .keys .btn { flex: 0 0 auto; }
+  #screen .keys .field { flex: 1 0 160px; }
+
+  #login { justify-content: center; align-items: stretch; padding: 24px; gap: 14px; }
+  #login .logo { width: 96px; height: 96px; margin: 0 auto 10px; }
+  #login h1 { margin: 0; text-align: center; font-size: 15px; letter-spacing: .3em; text-transform: uppercase; font-weight: 700; }
+  #login p { margin: 0; color: var(--dim); text-align: center; font-size: 12px; }
+  #login .btn { height: 44px; line-height: 42px; }
+  #login #loginError { color: var(--fg); min-height: 1.4em; }
+  #login #loginError:not(:empty)::before { content: "! "; }
+
+  #busy { position: fixed; top: calc(env(safe-area-inset-top) + 10px); right: 16px; z-index: 20; pointer-events: none; }
+  #busy .logo { width: 20px; height: 20px; }
+
+  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 90px); z-index: 30; background: var(--fg); color: var(--bg); padding: 8px 12px; font-size: 12px; }
+  #toast::before { content: "! "; }
 </style>
 </head>
 <body>
-<header><span id="dot"></span><h1>Agent Hub</h1><select id="room"></select></header>
+
+<svg id="logo-def" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="mark" viewBox="0 0 100 100">
+    <circle cx="50" cy="50" r="46"/>
+    <line x1="50" y1="4" x2="50" y2="96"/>
+    <line x1="6.25" y1="35.78" x2="93.75" y2="64.22"/>
+    <line x1="22.96" y1="12.78" x2="77.04" y2="87.22"/>
+    <line x1="22.96" y1="87.22" x2="77.04" y2="12.78"/>
+    <line x1="6.25" y1="64.22" x2="93.75" y2="35.78"/>
+  </symbol>
+</svg>
+
+<header>
+  <svg class="logo" id="headLogo"><use href="#mark"/></svg>
+  <span class="title">metacom</span>
+  <span class="spacer"></span>
+  <span id="state">offline</span>
+  <label class="field select"><select id="room" aria-label="room"></select></label>
+</header>
+
 <div id="agents"></div>
-<div id="stream"></div>
-<form id="composer">
-  <select id="target"><option value="auto">auto</option><option value="room">room</option></select>
-  <textarea id="text" rows="1" placeholder="Instruction for an agent…" enterkeyhint="send"></textarea>
-  <button id="send" type="submit">Send</button>
+<div id="stream"><div class="empty">no messages</div></div>
+
+<form id="composer" autocomplete="off">
+  <div class="line">
+    <label class="field select"><span class="prompt">@</span><select id="target" aria-label="target"><option value="auto">auto</option><option value="room">room</option></select></label>
+    <label class="field text"><span class="prompt">&gt;</span><textarea id="text" rows="1" placeholder="instruction" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></label>
+    <button id="send" class="btn" type="submit">send</button>
+  </div>
 </form>
-<div id="screen" class="hidden">
-  <header><h1 id="screenTitle">Screen</h1><button id="screenClose" type="button">Close</button></header>
+
+<div id="screen" class="overlay hidden">
+  <header>
+    <svg class="logo"><use href="#mark"/></svg>
+    <span class="title" id="screenTitle">screen</span>
+    <span class="spacer"></span>
+    <button id="screenRefresh" class="btn ghost" type="button">refresh</button>
+    <button id="screenClose" class="btn" type="button">close</button>
+  </header>
   <pre id="screenText"></pre>
   <div class="keys">
-    <button data-cmd="!keys enter">Enter</button><button data-cmd="!keys esc">Esc</button><button data-cmd="!keys y">y</button>
-    <button data-cmd="!keys up">↑</button><button data-cmd="!keys down">↓</button><button data-cmd="!cancel">Cancel turn</button>
-    <button id="screenRefresh" type="button">Refresh</button>
+    <button class="btn" data-cmd="!keys enter">enter</button>
+    <button class="btn" data-cmd="!keys esc">esc</button>
+    <button class="btn" data-cmd="!keys y">y</button>
+    <button class="btn" data-cmd="!keys up">up</button>
+    <button class="btn" data-cmd="!keys down">down</button>
+    <button class="btn ghost" data-cmd="!cancel">cancel</button>
+    <label class="field"><span class="prompt">&gt;</span><input id="screenType" placeholder="type into agent" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
   </div>
 </div>
-<div id="login">
-  <h2>Agent Hub</h2>
-  <p>Paste your owner token. It stays in this browser only.</p>
-  <input id="token" type="password" placeholder="token" autocomplete="off">
-  <button id="loginBtn">Connect</button>
+
+<div id="login" class="overlay">
+  <svg class="logo" id="loginLogo"><use href="#mark"/></svg>
+  <h1>metacom</h1>
+  <p>owner token. it stays in this browser.</p>
+  <label class="field"><span class="prompt">&gt;</span><input id="token" type="password" placeholder="token" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></label>
+  <button id="loginBtn" class="btn" type="button">connect</button>
   <p id="loginError"></p>
 </div>
+
+<div id="busy" class="hidden"><svg class="logo spin"><use href="#mark"/></svg></div>
+<div id="toast" class="hidden"></div>
+
 <script src="/app.js"></script>
 </body>
 </html>

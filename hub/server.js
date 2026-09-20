@@ -29,7 +29,27 @@ const console = {
   debug: () => {},
 };
 
+/// `node server.js token <name> [--role owner|agent]`: mint a token on the hub machine, offline.
+/// Whoever can read the hub's data directory is its owner; this is how a lost owner token is
+/// replaced. A running hub picks the new token up from tokens.json without a restart.
+const mintToken = (argv) => {
+  const name = argv[0];
+  const role = argv[argv.indexOf('--role') + 1] || 'owner';
+  if (!name || name.startsWith('-')) {
+    process.stderr.write('usage: node server.js token <name> [--role owner|agent]\n');
+    process.exit(1);
+  }
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const quiet = { ...console, warn: () => {}, log: () => {} };
+  const auth = new Auth(dataDir, quiet);
+  const { token, record } = auth.create({ name, role });
+  process.stderr.write(`${role} token "${record.name}" created in ${path.join(dataDir, 'tokens.json')}, shown once:\n`);
+  process.stdout.write(token + '\n');
+  process.stderr.write(`on your machine: metacom login <hub url> ${role === 'owner' ? '<this token>' : '<owner token> --agent-token <this token>'}\n`);
+};
+
 const main = async () => {
+  if (process.argv[2] === 'token') return mintToken(process.argv.slice(3));
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const seeds = [
     { token: env.HUB_OWNER_TOKEN, name: 'env-owner', role: 'owner' },

@@ -18,7 +18,7 @@ Directories:
 | --- | --- |
 | `metacom/` | clean upstream clone of metarhia/metacom (master, tests pass) |
 | `hub/` | the server: auth, rooms, agents, routing, phone web client, Docker/Caddy deploy |
-| `cli/` | `metacom` command (alias `mc`): joins an agent or you to the hub |
+| `cli/` | `metacom` command (alias `mc`): joins an agent or you to the hub; `cli/src/chat/` is the terminal chat (Ink + termcn) |
 
 ## How it works
 
@@ -32,6 +32,23 @@ Directories:
   instructions are typed into the agent only when it is `waiting`, never into a dialog. Claude
   Code also gets MCP tools (`hub_agents`, `hub_read`, `hub_say`, `hub_send`, `hub_wait`,
   `hub_wait_agent`) so it can read and post in the room and wait for another agent.
+- **The chat** `metacom <room> -n <name>` (no command) is a terminal chat for humans, an
+  [Ink](https://github.com/vadimdemedes/ink) app built from [termcn](https://termcn.dev) components
+  (`cli/src`, TypeScript, run through tsx so nothing is built). It works like Claude Code's prompt:
+  the conversation goes to the terminal's own scrollback (Ink's `Static`), a live region at the
+  bottom holds the status line (every member with a glyph: `●` idle, spinner working, `!` needs
+  you, `✓` done, `○` offline, `◆` human), a bordered multi-line input and a popup. Every member
+  gets a colour from a hash of the name, so Alex is the same colour for everyone. `@` opens the
+  member list (`@auto` included), `/` opens the commands; ↑↓ choose, tab or enter inserts. A
+  message that starts with `@Agent` is typed into that agent, `@human` is a directed message,
+  anything else is posted to the room with mentions highlighted. Blocked and finished agents are
+  announced with a bell; `/read`, `/wait`, `/cancel`, `/keys` act on them without leaving the
+  chat. Ctrl+J or a trailing `\` adds a line, ↑ walks history, esc esc clears, `/help` lists
+  the rest. termcn themes ship with it: `--theme dracula`, `MC_THEME`, or `/theme` in the chat
+  (default, catppuccin, dracula, github, gruvbox, nord, one-dark, rose-pine, solarized,
+  tokyo-night). Resizing re-renders the recent log at the new width. Pipes and `--plain` get a
+  bare readline version. `node scripts/termcn-sync.js <item…>` pulls termcn components into
+  `cli/src` verbatim from the registry (the shadcn CLI mangles a newline literal in text-area).
 - **The assistant** (Jev) lives in the hub. Flow only transcribes and sends the text plus what it
   sees on screen; the hub runs the model over a closed, typed tool set, executes the hub tools
   itself (`message_agent`, `read_agent`, `say_to_room`) and returns Flow only validated local
@@ -69,6 +86,8 @@ agents). What was taken, and what was deliberately not:
 ```bash
 cd hub && npm install && node server.js        # or deploy/install-launchd.sh for autostart
 metacom login ws://127.0.0.1:8900/ <owner token>    # token printed once to bootstrap-token.txt
+# lost the owner token? mint another on the hub machine, the running hub picks it up at once:
+node hub/server.js token misha --role owner
 metacom token macbook --role agent --save      # agents on this machine use this one
 ```
 

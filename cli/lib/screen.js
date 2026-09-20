@@ -36,7 +36,8 @@ class Screen {
     const buffer = this.term.buffer.active;
     const rows = this.term.rows;
     const out = [];
-    for (let i = Math.max(0, buffer.length - rows); i < buffer.length; i++) {
+    const top = Math.max(0, Math.min(buffer.baseY, buffer.length - rows));
+    for (let i = top; i < Math.min(buffer.length, top + rows); i++) {
       const line = buffer.getLine(i);
       if (line) out.push(line.translateToString(true).trimEnd());
     }

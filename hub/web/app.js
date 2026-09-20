@@ -84,9 +84,76 @@ const el = (tag, cls, text) => {
   if (text !== undefined) n.textContent = text;
   return n;
 };
+const SVG = 'http://www.w3.org/2000/svg';
+const mark = (cls) => {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('class', cls);
+  const use = document.createElementNS(SVG, 'use');
+  use.setAttribute('href', '#mark');
+  svg.append(use);
+  return svg;
+};
 
-const state = { hub: null, room: null, members: [], me: null };
+const state = { hub: null, room: null, members: [], me: null, screenAgent: null, pending: 0 };
 const wsUrl = () => (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/';
+
+// The spinning mark in the corner while any call is in flight, and on the login screen
+// while connecting. It is the same five-line circle as the logo.
+const busy = (on) => {
+  state.pending = Math.max(0, state.pending + (on ? 1 : -1));
+  $('busy').classList.toggle('hidden', state.pending === 0);
+};
+const withBusy = async (fn) => {
+  busy(true);
+  try {
+    return await fn();
+  } finally {
+    busy(false);
+  }
+};
+
+let toastTimer = null;
+const toast = (text) => {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 3000);
+};
+
+const store = {
+  get: (k) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k, v) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      // private mode: lives for this page only
+    }
+  },
+  del: (k) => {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      // ignore
+    }
+  },
+};
+
+const glyphFor = (m) => {
+  if (!m.connected) return el('i', 'glyph stopped');
+  if (m.status === 'working') {
+    const g = el('i', 'glyph');
+    g.append(mark('logo spin'));
+    return g;
+  }
+  return el('i', `glyph ${m.status}`);
+};
 
 const renderAgents = () => {
   const box = $('agents');
@@ -98,23 +165,30 @@ const renderAgents = () => {
   for (const m of list) {
     if (m.kind !== 'agent') continue;
     const done = m.attention && m.status !== 'blocked';
-    const card = el('div', `agent ${m.connected ? m.status : 'stopped'}${done ? ' done' : ''}`);
-    const title = el('b');
-    title.append(el('i'), document.createTextNode(m.name));
-    if (m.connected && m.status === 'blocked') title.append(el('em', '', 'needs you'));
-    else if (done) title.append(el('em', '', 'done'));
-    card.append(title, el('small', '', `${m.connected ? m.status : 'offline'}${m.host ? ' · ' + m.host : ''}`));
-    if (m.repo) card.append(el('small', '', m.repo.split('/').pop()));
-    if (m.connected && m.status === 'blocked' && m.reason) card.append(el('small', '', m.reason.replace(/^screen: /, '')));
-    const view = el('button', '', 'screen');
-    view.type = 'button';
-    view.onclick = (e) => {
-      e.stopPropagation();
-      openScreen(m.name);
-    };
-    if (m.connected) card.append(view);
+    const status = m.connected ? m.status : 'stopped';
+    const card = el('div', `agent ${status}${done ? ' done' : ''}${keep === m.name ? ' selected' : ''}`);
+    const title = el('div', 'name');
+    title.append(glyphFor(m), document.createTextNode(m.name));
+    card.append(title);
+    if (m.connected && m.status === 'blocked') card.append(el('span', 'tag', 'needs you'));
+    else if (done) card.append(el('span', 'tag', 'done'));
+    card.append(el('div', 'meta', `${status}${m.host ? ' @ ' + m.host : ''}`));
+    if (m.repo) card.append(el('div', 'meta', m.repo.split('/').pop()));
+    if (m.connected && m.status === 'blocked' && m.reason) card.append(el('div', 'meta', m.reason.replace(/^screen: /, '')));
+    if (m.connected) {
+      const row = el('div', 'row');
+      const view = el('button', 'btn', 'screen');
+      view.type = 'button';
+      view.onclick = (e) => {
+        e.stopPropagation();
+        openScreen(m.name);
+      };
+      row.append(view);
+      card.append(row);
+    }
     card.onclick = () => {
       target.value = m.name;
+      for (const c of box.children) c.classList.toggle('selected', c === card);
       $('text').focus();
       if (m.attention) state.hub.call('agents/seen', { name: m.name }).catch(() => {});
     };
@@ -127,10 +201,9 @@ const renderAgents = () => {
 const openScreen = async (name) => {
   state.screenAgent = name;
   $('screenTitle').textContent = name;
-  $('screenText').textContent = '…';
   $('screen').classList.remove('hidden');
   try {
-    const r = await state.hub.call('agents/read', { name, lines: 60 });
+    const r = await withBusy(() => state.hub.call('agents/read', { name, lines: 80 }));
     $('screenText').textContent = r.text || '(empty)';
     $('screenText').scrollTop = $('screenText').scrollHeight;
     state.hub.call('agents/seen', { name }).catch(() => {});
@@ -140,34 +213,39 @@ const openScreen = async (name) => {
 };
 $('screenClose').onclick = () => $('screen').classList.add('hidden');
 $('screenRefresh').onclick = () => openScreen(state.screenAgent);
-for (const b of document.querySelectorAll('#screen .keys button[data-cmd]')) {
-  b.onclick = async () => {
-    try {
-      await state.hub.call('agents/send', { to: state.screenAgent, text: b.dataset.cmd, kind: 'command' });
-      setTimeout(() => openScreen(state.screenAgent), 700);
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-}
+const sendCommand = async (text) => {
+  try {
+    await withBusy(() => state.hub.call('agents/send', { to: state.screenAgent, text, kind: 'command' }));
+    setTimeout(() => openScreen(state.screenAgent), 700);
+  } catch (error) {
+    toast(error.message);
+  }
+};
+for (const b of document.querySelectorAll('#screen .keys button[data-cmd]')) b.onclick = () => sendCommand(b.dataset.cmd);
+$('screenType').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const text = $('screenType').value;
+  if (!text) return;
+  $('screenType').value = '';
+  sendCommand(`!type ${text}`);
+});
 
 const renderMessage = (m) => {
+  const stream = $('stream');
+  const placeholder = stream.querySelector('.empty');
+  if (placeholder) placeholder.remove();
   if (m.kind === 'system') {
-    const sys = el('div', 'msg system', `${m.ts.slice(11, 16)} · ${m.text}`);
-    $('stream').append(sys);
+    stream.append(el('div', 'msg system', `${m.ts.slice(11, 16)} ${m.text}`));
     return;
   }
   const mine = state.me && m.from.name === state.me.name && m.from.role === 'owner';
   const node = el('div', `msg${mine ? ' mine' : ''}`);
   const meta = el('div', 'meta');
-  meta.append(document.createTextNode(`${m.ts.slice(11, 16)} ${m.from.name}`));
-  if (m.to) {
-    meta.append(document.createTextNode(' → '));
-    meta.append(el('span', 'to', m.to));
-  }
-  if (m.kind !== 'say' && m.kind !== 'command') meta.append(document.createTextNode(` [${m.kind}]`));
+  meta.append(document.createTextNode(`${m.ts.slice(11, 16)} `), el('span', 'from', m.from.name));
+  if (m.to) meta.append(el('span', 'to', m.to));
+  if (m.kind !== 'say' && m.kind !== 'command') meta.append(document.createTextNode(' '), el('span', 'kind', `[${m.kind}]`));
   node.append(meta, document.createTextNode(m.text));
-  const stream = $('stream');
   const atBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 40;
   stream.append(node);
   if (atBottom || mine) stream.scrollTop = stream.scrollHeight;
@@ -175,13 +253,9 @@ const renderMessage = (m) => {
 
 const loadRoom = async (room) => {
   state.room = room;
-  try {
-    localStorage.setItem('hub.room', room);
-  } catch {
-    // private mode
-  }
-  $('stream').replaceChildren();
-  const history = await state.hub.call('room/history', { room, limit: 80 });
+  store.set('hub.room', room);
+  $('stream').replaceChildren(el('div', 'empty', 'no messages'));
+  const history = await withBusy(() => state.hub.call('room/history', { room, limit: 100 }));
   for (const m of history) renderMessage(m);
   $('stream').scrollTop = $('stream').scrollHeight;
   renderAgents();
@@ -190,7 +264,11 @@ const loadRoom = async (room) => {
 const start = async (token) => {
   const hub = new Hub(wsUrl(), token);
   state.hub = hub;
-  hub.onState = (on) => $('dot').classList.toggle('on', on);
+  hub.onState = (on) => {
+    $('state').textContent = on ? 'online' : 'offline';
+    $('state').classList.toggle('on', on);
+    $('headLogo').classList.toggle('spin', !on);
+  };
   hub.on('agents/changed', ({ members }) => {
     state.members = members;
     renderAgents();
@@ -198,25 +276,32 @@ const start = async (token) => {
   hub.on('room/message', (m) => {
     if (m.room === state.room) renderMessage(m);
   });
-  state.me = await hub.connect();
+  $('loginLogo').classList.add('spin');
+  try {
+    state.me = await hub.connect();
+  } finally {
+    $('loginLogo').classList.remove('spin');
+  }
   await hub.call('agents/register', { name: state.me.name, kind: 'human', room: '*' }).catch(() => {});
   await hub.call('room/join', { room: '*' });
   state.members = await hub.call('agents/list', {});
   const rooms = (await hub.call('room/list', {})).map((r) => r.room);
   const select = $('room');
   select.replaceChildren(...rooms.map((r) => new Option(r, r)));
-  let remembered = null;
-  try {
-    remembered = localStorage.getItem('hub.room');
-  } catch {
-    remembered = null;
-  }
+  const remembered = store.get('hub.room');
   const first = rooms.includes(remembered) ? remembered : rooms.find((r) => state.members.some((m) => m.room === r && m.kind === 'agent')) || rooms[0];
   select.value = first;
   select.onchange = () => loadRoom(select.value);
   await loadRoom(first);
   $('login').classList.add('hidden');
 };
+
+const autosize = () => {
+  const t = $('text');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, window.innerHeight * 0.4) + 'px';
+};
+$('text').addEventListener('input', autosize);
 
 $('composer').onsubmit = async (event) => {
   event.preventDefault();
@@ -226,12 +311,15 @@ $('composer').onsubmit = async (event) => {
   const button = $('send');
   button.disabled = true;
   try {
-    if (target === 'room') await state.hub.call('room/say', { room: state.room, text });
-    else if (target === 'auto') await state.hub.call('agents/dispatch', { text, room: state.room });
-    else await state.hub.call('agents/send', { to: target, text, kind: 'command' });
+    await withBusy(async () => {
+      if (target === 'room') await state.hub.call('room/say', { room: state.room, text });
+      else if (target === 'auto') await state.hub.call('agents/dispatch', { text, room: state.room });
+      else await state.hub.call('agents/send', { to: target, text, kind: 'command' });
+    });
     $('text').value = '';
+    autosize();
   } catch (error) {
-    alert(error.message);
+    toast(error.message);
   } finally {
     button.disabled = false;
     $('text').focus();
@@ -244,26 +332,37 @@ $('text').addEventListener('keydown', (e) => {
   }
 });
 
-$('loginBtn').onclick = async () => {
+const login = async () => {
   const token = $('token').value.trim();
   if (!token) return;
   $('loginError').textContent = '';
+  $('loginBtn').disabled = true;
   try {
     await start(token);
-    try {
-      localStorage.setItem('hub.token', token);
-    } catch {
-      // private mode: token lives for this page only
-    }
+    store.set('hub.token', token);
   } catch (error) {
     $('loginError').textContent = error.message;
+  } finally {
+    $('loginBtn').disabled = false;
   }
 };
+$('loginBtn').onclick = login;
+$('token').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') login();
+});
 
-let saved = null;
-try {
-  saved = localStorage.getItem('hub.token');
-} catch {
-  saved = null;
-}
+// Long-press the header logo to forget the token and go back to the login screen.
+let pressTimer = null;
+$('headLogo').addEventListener('pointerdown', () => {
+  pressTimer = setTimeout(() => {
+    store.del('hub.token');
+    if (state.hub) state.hub.close();
+    $('token').value = '';
+    $('login').classList.remove('hidden');
+    toast('token forgotten');
+  }, 1200);
+});
+for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) $('headLogo').addEventListener(ev, () => clearTimeout(pressTimer));
+
+const saved = store.get('hub.token');
 if (saved) start(saved).catch(() => $('login').classList.remove('hidden'));
