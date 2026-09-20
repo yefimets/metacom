@@ -123,14 +123,29 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   }, [editor, store, redraw]);
 
   const submit = useCallback(() => {
+    // /attach <path> puts the file's token into the input instead of sending anything
+    const attach = editor.text.match(/^\/attach\s+(.+)$/s);
+    if (attach) {
+      const token = store.attach(attach[1]!.trim());
+      editor.set(token ? token + " " : "");
+      setPopup(EMPTY_POPUP);
+      return refresh();
+    }
     const text = editor.submit();
     setPopup(EMPTY_POPUP);
     redraw();
-    void store.submit(text);
-  }, [editor, store, redraw]);
+    void store.submit(text).then((ok) => {
+      // a refused message with files comes back into the input, so the tokens are not lost
+      if (ok || editor.text || store.pending(text).length === 0) return;
+      editor.set(text);
+      refresh();
+    });
+  }, [editor, store, redraw, refresh]);
 
+  // A pasted path to an image or document (a file dropped on the terminal) becomes its token.
   usePaste((text) => {
-    editor.insert(text.replace(/\r\n?/g, "\n"));
+    const token = store.attachPasted(text);
+    editor.insert(token ? token + " " : text.replace(/\r\n?/g, "\n"));
     refresh();
   });
 
@@ -144,6 +159,11 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return store.quit();
     }
     if (key.ctrl && input === "d" && !editor.text) return store.quit();
+    if (key.ctrl && input === "v") {
+      const token = store.attachClipboard();
+      if (token) editor.insert(token + " ");
+      return refresh();
+    }
     if (key.escape) {
       const twice = Date.now() - lastEsc.current < 900;
       lastEsc.current = Date.now();
@@ -207,14 +227,15 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const nameW = useMemo(() => Math.min(14, Math.max(6, ...[...members.values()].map((m) => terminalWidth(m.name)))), [members]);
   const width = Math.max(30, columns - 1);
   const footerRoom = rows - 3 - Math.min(6, editor.lines.length) - 3;
+  const pending = store.pending(editor.text);
   return (
     <Box flexDirection="column" width={columns}>
       <Static key={state.epoch} items={state.log} style={{ flexDirection: "column", width: columns }}>
         {(entry) => <EntryView key={entry.id} entry={entry} members={members} nameW={nameW} state={state} />}
       </Static>
       <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} />
-      <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} />
-      {popup.kind ? <Popup popup={popup} room={footerRoom} /> : <Footer text={editor.text} busy={state.busy} members={members} room={state.room} />}
+      <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} />
+      {popup.kind ? <Popup popup={popup} room={footerRoom} /> : <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} />}
     </Box>
   );
 };

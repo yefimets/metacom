@@ -61,6 +61,12 @@ export const MessageLine = ({ msg, grouped, members, nameW }: { msg: Message; gr
         ) : (
           <Highlighted text={msg.text} members={members} />
         )}
+        {msg.media && msg.media.some((m) => !msg.text.includes(`[${m.name}]`)) && (
+          <Text color={muted} wrap="wrap">
+            {msg.text ? " " : ""}
+            {msg.media.filter((m) => !msg.text.includes(`[${m.name}]`)).map((m) => `[${m.name}]`).join(" ")}
+          </Text>
+        )}
       </Box>
     </Box>
   );

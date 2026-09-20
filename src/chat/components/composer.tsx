@@ -6,6 +6,32 @@ import { useUnicode } from "@/hooks/use-unicode";
 import { resolveBorderStyle } from "@/lib/terminal-style";
 import { splitGraphemes, terminalWidth } from "@/lib/terminal-text";
 
+/// A row of the input with attachment tokens such as `[image 2.png]` in the accent colour.
+/// A token cut by the wrap is shown plain on both rows.
+const Tokens = ({ row, tokens, color }: { row: string; tokens: string[]; color: string }) => {
+  if (tokens.length === 0) return <Text>{row}</Text>;
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  let last = 0;
+  while (i < row.length) {
+    const hit = tokens.find((t) => row.startsWith(t, i));
+    if (!hit) {
+      i++;
+      continue;
+    }
+    if (i > last) parts.push(<Text key={parts.length}>{row.slice(last, i)}</Text>);
+    parts.push(
+      <Text key={parts.length} color={color}>
+        {hit}
+      </Text>
+    );
+    i += hit.length;
+    last = i;
+  }
+  if (last < row.length) parts.push(<Text key={parts.length}>{row.slice(last)}</Text>);
+  return <Text>{parts}</Text>;
+};
+
 export const INPUT_ROWS = 6;
 
 type Layout = { rows: string[]; cursor: { row: number; col: number } };
@@ -44,7 +70,8 @@ export const layout = (text: string, cursor: number, width: number): Layout => {
 
 /// The input box: a rounded frame in the theme's border colour, a `❯` prompt, character-wrapped
 /// lines, a window of INPUT_ROWS rows that follows the cursor, and the real terminal cursor.
-export const Composer = ({ text, cursor, width, placeholder }: { text: string; cursor: number; width: number; placeholder: string }) => {
+/// `tokens` are the attachment placeholders in the text, drawn in the accent colour.
+export const Composer = ({ text, cursor, width, placeholder, tokens = [] }: { text: string; cursor: number; width: number; placeholder: string; tokens?: string[] }) => {
   const theme = useTheme();
   const unicode = useUnicode();
   const ref = useRef(null);
@@ -84,7 +111,7 @@ export const Composer = ({ text, cursor, width, placeholder }: { text: string; c
           {text === "" && i === 0 ? (
             <Text color={muted}>{measured ? placeholder : "▌" + placeholder}</Text>
           ) : measured || cursorRow !== i ? (
-            <Text>{row}</Text>
+            <Tokens row={row} tokens={tokens} color={theme.colors.accent} />
           ) : (
             <Text>
               {row.slice(0, at.col)}

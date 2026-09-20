@@ -17,7 +17,7 @@ const usage = `metacom – join agents and yourself to the metacom hub (mc is a 
                                         command, an interactive chat (--theme dracula, --plain for a bare one).
       --repo PATH        repository the agent works in (default: cwd)
       --caps a,b,c       capabilities used for routing, e.g. swift,ios,node
-      --accept owner|any also type commands sent by other agents (default owner)
+      --accept any|owner|a,b   whose commands get typed in: any agent (default), only you, or named agents
       --no-mcp           do not give claude the hub_* MCP tools
   metacom agents [--room R]                  who is on the hub and their status
                                              ● online  ! blocked on a question  * done, not looked at yet
@@ -26,8 +26,9 @@ const usage = `metacom – join agents and yourself to the metacom hub (mc is a 
   metacom seen <name>                        clear the done badge
   metacom send <name|auto> <text…> [--wait]  instruction to an agent; auto lets the hub pick;
                                              --wait returns when the agent finishes the turn
+      --file PATH        attach an image or document (repeatable); the agent gets it as a local path
       !cancel  !stop  !keys enter|esc|up|y  !type text    control commands: act at once, never typed as text
-  metacom say <text…> [--room R]             post to the room
+  metacom say <text…> [--room R] [--file P]  post to the room
   metacom tail [--room R]                    follow the room
   metacom rooms                              list rooms
   metacom token <name> --role owner|agent    create a token (owner only), prints it once
@@ -67,6 +68,8 @@ const parse = (argv, { command = false } = {}) => {
       opts.json = true;
     } else if (a === '--wait') {
       opts.wait = true;
+    } else if (a === '--file') {
+      (opts.files = opts.files || []).push(argv[++i]);
     } else if (a === '--lines') {
       opts.lines = Number(argv[++i]);
     } else if (a === '--until') {
@@ -126,7 +129,7 @@ const main = async () => {
       return;
     }
     const { wrap } = require('../lib/wrap.js');
-    await wrap({ name, room, repo: opts.repo, caps: opts.caps || [], accept: opts.accept || 'owner', command: rest[0], args: rest.slice(1), config: cfg, mcp: opts.mcp !== false });
+    await wrap({ name, room, repo: opts.repo, caps: opts.caps || [], accept: opts.accept || 'any', command: rest[0], args: rest.slice(1), config: cfg, mcp: opts.mcp !== false });
     return;
   }
 
@@ -138,6 +141,13 @@ const main = async () => {
   };
   const out = (s) => process.stdout.write(s + '\n');
   const show = (value, render) => out(opts.json ? JSON.stringify(value, null, 2) : render(value));
+  const uploads = async () => {
+    if (!opts.files || opts.files.length === 0) return undefined;
+    const { upload, resolvePath } = require('../lib/media.js');
+    const media = [];
+    for (const f of opts.files) media.push(await upload({ http: cfg.http, token: cfg.token, file: resolvePath(f) }));
+    return media;
+  };
   try {
     switch (first) {
       case 'agents': {
@@ -171,27 +181,28 @@ const main = async () => {
       case 'send': {
         const [to, ...words] = rest;
         const text = words.join(' ');
-        if (!to || !text) throw new Error('usage: metacom send <name|auto> <text…>');
+        if (!to || (!text && !opts.files)) throw new Error('usage: metacom send <name|auto> <text…> [--file PATH]');
         const wait = opts.wait ? { timeoutMs: (opts.timeout || 600) * 1000 } : null;
+        const media = await uploads();
         if (to === 'auto') {
-          const r = await hub.api.agents.dispatch({ text, room: opts.room });
+          const r = await hub.api.agents.dispatch({ text, room: opts.room, media });
           show(r, (x) => `→ ${x.agent} (${x.reason})${x.delivered ? '' : ', queued'}`);
         } else {
-          const r = await hub.api.agents.send({ to, text, kind: 'command', wait });
+          const r = await hub.api.agents.send({ to, text, kind: 'command', wait, media });
           show(r, (x) => `${x.delivered ? 'delivered' : 'queued'} → ${x.to}${x.turn ? (x.turn.stalled ? ', but nothing happened (stalled)' : `, now ${x.turn.status}`) : ''}`);
         }
         break;
       }
       case 'say': {
         const text = rest.join(' ');
-        if (!text) throw new Error('usage: metacom say <text…>');
-        await hub.api.room.say({ room: opts.room || cfg.room, text });
+        if (!text && !opts.files) throw new Error('usage: metacom say <text…> [--file PATH]');
+        await hub.api.room.say({ room: opts.room || cfg.room, text, media: await uploads() });
         break;
       }
       case 'tail': {
         const room = opts.room || cfg.room;
         await hub.api.room.join({ room });
-        const render = (m) => (opts.json ? JSON.stringify(m) : line(m));
+        const render = (m) => (opts.json ? JSON.stringify(m) : line(m, cfg.http));
         for (const m of await hub.api.room.history({ room, limit: 20 })) out(render(m));
         hub.api.room.on('message', (m) => out(render(m)));
         return;
