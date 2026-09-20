@@ -58,9 +58,15 @@ Directories:
   `message_agent` with agent `auto` ask the hub to pick: agent named in the text, repository
   name, declared capabilities (`--caps swift,ios`), then whoever is idle; blocked agents are
   never picked. With `OPENROUTER_API_KEY` set on the hub, an unsure heuristic asks a model.
-- **Owner gate.** Only messages from an *owner* token are typed into an agent. Agent-to-agent
-  messages are information the recipient reads with `hub_read`, unless that agent was started
-  with `--accept any` or `--accept Alex,Bob`.
+- **Agents talk to each other.** `hub_agents` shows, per agent, whose commands it takes
+  (`accepts any` by default; `--accept owner` or `--accept Alex,Bob` narrows it, and the hub
+  publishes the policy). `hub_send` to an agent that accepts you is typed into its terminal as
+  `[hub Alex] …` when it is idle; to anyone else, and for `kind: info` replies, it is typed as
+  `[hub Alex (info)] …`, a note rather than an instruction. The owner's messages are always
+  commands. Each wrapped Claude starts with the room's roster in its system prompt and a rule
+  never to send a request back to the agent that sent it. So "push, then have the Mac pull
+  and test" is one instruction to one agent: it pushes, `hub_send`s the other, waits with
+  `hub_wait_agent`, and reads the reply.
 - **Control commands** from the owner act at once and are never typed as text: `!cancel` (Esc),
   `!keys enter|esc|up|down|y`, `!type text`, `!stop`. They are how you answer a blocked agent
   from the phone or from Jev.
@@ -112,8 +118,22 @@ metacom wait Alex                              # block until it is waiting, bloc
 metacom rooms                                  # per-room rollup
 metacom send auto "fix the swift build in flow" # hub picks Alex
 metacom say "stop touching the database layer" # everyone in the room
+metacom send Alex "make it look like this" --file ~/Desktop/shot.png   # the agent gets a local path
 metacom tail                                   # follow the room
 ```
+
+### Files
+
+Images and documents (png, jpg, gif, webp, heic, svg, pdf, txt, md; up to 20 MB, 8 per
+message) travel with messages. On the phone, paste, drop or `+` pick them; in the terminal
+chat, `ctrl+v` takes the image on the clipboard (osascript on macOS, wl-paste / xclip on
+Linux) and puts `[image 1.png]` into the input, pasting a file path (drag a file onto the
+terminal) puts `[name.png]`, and `/attach <path>` does the same by hand; delete the token to
+drop the file. The hub stores them under its data directory and serves them at
+`/media/<random id>`; the wrapper downloads them into `~/.local/share/metacom-hub/media/` on
+the agent's machine and types the message with `(attached file: image 1.png = /path)` after
+the text, so Claude Code opens the image with its own Read tool. `hub_read` and `hub_wait`
+show attachments the same way.
 
 ### Flow
 
@@ -143,7 +163,7 @@ typing into a terminal.
 Open the hub URL in Safari, paste the owner token once (it stays in that browser), add to
 home screen. The client (`hub/web`, no build step) is black and white, zero radius: white
 block buttons, terminal inputs with a `>` prompt, and the mark, five lines meeting in the
-centre of a circle, is the logo and, spinning, the loader (header while reconnecting, corner
+centre, is the logo and, spinning, the loader (header while reconnecting, corner
 while a call is in flight, inside an agent card while it works). Agents with status (inverted
 card when blocked on a question, *done* tag when a turn finished), the room stream, a composer
 with *auto* / *room* / agent targets, and a *screen* button per agent that shows its terminal

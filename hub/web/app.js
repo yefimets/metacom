@@ -173,6 +173,7 @@ const renderAgents = () => {
     if (m.connected && m.status === 'blocked') card.append(el('span', 'tag', 'needs you'));
     else if (done) card.append(el('span', 'tag', 'done'));
     card.append(el('div', 'meta', `${status}${m.host ? ' @ ' + m.host : ''}`));
+    if (m.accept && m.accept !== 'any') card.append(el('div', 'meta', `accepts ${Array.isArray(m.accept) ? m.accept.join(',') : m.accept}`));
     if (m.repo) card.append(el('div', 'meta', m.repo.split('/').pop()));
     if (m.connected && m.status === 'blocked' && m.reason) card.append(el('div', 'meta', m.reason.replace(/^screen: /, '')));
     if (m.connected) {
@@ -231,6 +232,29 @@ $('screenType').addEventListener('keydown', (e) => {
   sendCommand(`!type ${text}`);
 });
 
+// Attached files under a message: images inline, anything else as a link.
+const renderMedia = (list) => {
+  const box = el('div', 'media');
+  for (const f of list) {
+    const a = el('a');
+    a.href = f.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    if (f.type.startsWith('image/')) {
+      const img = el('img');
+      img.src = f.url;
+      img.alt = f.name;
+      img.loading = 'lazy';
+      a.append(img);
+    } else {
+      a.className = 'doc';
+      a.textContent = f.name;
+    }
+    box.append(a);
+  }
+  return box;
+};
+
 const renderMessage = (m) => {
   const stream = $('stream');
   const placeholder = stream.querySelector('.empty');
@@ -246,10 +270,102 @@ const renderMessage = (m) => {
   if (m.to) meta.append(el('span', 'to', m.to));
   if (m.kind !== 'say' && m.kind !== 'command') meta.append(document.createTextNode(' '), el('span', 'kind', `[${m.kind}]`));
   node.append(meta, document.createTextNode(m.text));
+  if (Array.isArray(m.media) && m.media.length) node.append(renderMedia(m.media));
   const atBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 40;
   stream.append(node);
   if (atBottom || mine) stream.scrollTop = stream.scrollHeight;
 };
+
+// MARK: attachments. Pasted, dropped or picked files wait in a strip above the input and
+// are uploaded (POST /media with the token) when the message is sent.
+const ACCEPT = /^(image\/(png|jpeg|gif|webp|heic|svg\+xml)|application\/pdf|text\/(plain|markdown))$/;
+const files = [];
+const renderFiles = () => {
+  const box = $('files');
+  box.replaceChildren();
+  box.classList.toggle('hidden', files.length === 0);
+  files.forEach((f, i) => {
+    const card = el('div', 'file');
+    card.title = f.file.name;
+    if (f.file.type.startsWith('image/')) {
+      const img = el('img');
+      img.src = f.preview;
+      img.alt = f.file.name;
+      card.append(img);
+    } else {
+      card.append(el('span', 'ext', f.file.name.split('.').pop() || 'file'));
+    }
+    const x = el('button', 'x', '×');
+    x.type = 'button';
+    x.onclick = () => removeFile(i);
+    card.append(x);
+    box.append(card);
+  });
+};
+const addFile = (file) => {
+  if (!file) return;
+  const type = file.type || (file.name.endsWith('.md') ? 'text/markdown' : '');
+  if (!ACCEPT.test(type)) return toast(`${file.name || 'file'}: images, pdf and text only`);
+  if (file.size > 20 * 1024 * 1024) return toast(`${file.name}: larger than 20 MB`);
+  if (files.length >= 8) return toast('at most 8 files per message');
+  files.push({ file, type, preview: type.startsWith('image/') ? URL.createObjectURL(file) : null });
+  renderFiles();
+};
+const removeFile = (i) => {
+  const [f] = files.splice(i, 1);
+  if (f && f.preview) URL.revokeObjectURL(f.preview);
+  renderFiles();
+};
+const clearFiles = () => {
+  while (files.length) removeFile(0);
+};
+const upload = async (f) => {
+  const res = await fetch('/media', {
+    method: 'POST',
+    headers: { 'Content-Type': f.type, Authorization: `Bearer ${state.hub.token}`, 'X-Name': encodeURIComponent(f.file.name || 'pasted.png') },
+    body: f.file,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `upload failed (${res.status})`);
+  }
+  return res.json();
+};
+const uploadAll = async () => {
+  if (files.length === 0) return undefined;
+  const out = [];
+  for (const f of files) out.push(await upload(f));
+  return out;
+};
+$('fileInput').addEventListener('change', (e) => {
+  for (const f of e.target.files) addFile(f);
+  e.target.value = '';
+});
+$('text').addEventListener('paste', (e) => {
+  const items = [...(e.clipboardData ? e.clipboardData.items : [])].filter((it) => it.kind === 'file');
+  if (items.length === 0) return;
+  e.preventDefault();
+  for (const it of items) addFile(it.getAsFile());
+});
+let dragDepth = 0;
+document.addEventListener('dragenter', (e) => {
+  if (![...e.dataTransfer.types].includes('Files')) return;
+  dragDepth++;
+  document.body.classList.add('dragging');
+});
+document.addEventListener('dragleave', () => {
+  if (--dragDepth <= 0) {
+    dragDepth = 0;
+    document.body.classList.remove('dragging');
+  }
+});
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dragging');
+  for (const f of e.dataTransfer.files) addFile(f);
+});
 
 const loadRoom = async (room) => {
   state.room = room;
@@ -331,17 +447,19 @@ $('text').addEventListener('input', autosize);
 $('composer').onsubmit = async (event) => {
   event.preventDefault();
   const text = $('text').value.trim();
-  if (!text) return;
+  if (!text && files.length === 0) return;
   const target = $('target').value;
   const button = $('send');
   button.disabled = true;
   try {
     await withBusy(async () => {
-      if (target === 'room') await state.hub.call('room/say', { room: state.room, text });
-      else if (target === 'auto') await state.hub.call('agents/dispatch', { text, room: state.room });
-      else await state.hub.call('agents/send', { to: target, text, kind: 'command' });
+      const media = await uploadAll();
+      if (target === 'room') await state.hub.call('room/say', { room: state.room, text, media });
+      else if (target === 'auto') await state.hub.call('agents/dispatch', { text, room: state.room, media });
+      else await state.hub.call('agents/send', { to: target, text, kind: 'command', media });
     });
     $('text').value = '';
+    clearFiles();
     autosize();
   } catch (error) {
     toast(error.message);

@@ -3,6 +3,16 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { connect } = require("../../lib/client.js") as { connect: (o: object) => Promise<Hub> };
+const media = require("../../lib/media.js") as {
+  attachment: (file: string) => Omit<Attachment, "token">;
+  attachable: (text: string) => string | null;
+  clipboardImage: () => string | null;
+  resolvePath: (raw: string) => string;
+  upload: (o: { http: string; token: string | null; file: string }) => Promise<Media>;
+};
+
+export type Media = { url: string; type: string; size: number; name: string };
+export type Attachment = { file: string; name: string; type: string; size: number; token: string };
 
 export type Kind = "agent" | "human" | "system" | "route";
 export type Member = {
@@ -13,6 +23,7 @@ export type Member = {
   caps?: string[];
   host?: string;
   command?: string;
+  accept?: "owner" | "any" | string[];
   status: string;
   connected: boolean;
   attention: boolean;
@@ -26,6 +37,7 @@ export type Message = {
   from: { name: string; role: string; kind: Kind };
   to?: string;
   text: string;
+  media?: Media[];
 };
 export type RoomSummary = { room: string; agents: number; online: number; working: number; blocked: number; attention: number };
 export type Tone = "dim" | "ok" | "warn" | "error" | "plain";
@@ -47,13 +59,14 @@ export type State = {
   members: Map<string, Member>;
   log: Entry[];
   busy: string | null;
+  attachments: Attachment[]; // files whose tokens may be in the draft
   epoch: number; // bumped when the log must be drawn again from scratch (resize, /clear)
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
 type Hub = { m: { close: () => void; on: (e: string, fn: () => void) => void }; api: Api; me: { name: string; role: string } };
 
-export type Config = { url: string; token: string | null; agentToken?: string | null; room: string };
+export type Config = { url: string; http: string; token: string | null; agentToken?: string | null; room: string };
 
 export const COMMANDS = [
   { name: "agents", args: "", help: "who is in the room and what they are doing" },
@@ -63,6 +76,7 @@ export const COMMANDS = [
   { name: "cancel", args: "<name>", help: "send Esc to the agent" },
   { name: "keys", args: "<name> enter|esc|up|down|y", help: "press keys in the agent" },
   { name: "say", args: "<text>", help: "post to the room even if it starts with @ or /" },
+  { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or ctrl+v an image)" },
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
   { name: "clear", args: "", help: "clear the screen" },
@@ -95,11 +109,12 @@ export class Store {
   onBell: () => void = () => {};
   onQuit: () => void = () => {};
   onTheme: (name: string) => string | null = () => null;
+  private imageSeq = 0;
   config: Config;
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, epoch: 0 };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], epoch: 0 };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -213,20 +228,88 @@ export class Store {
     return Boolean(this.state.busy) || [...this.state.members.values()].some((m) => m.kind === "agent" && stateOf(m) === "working");
   }
 
+  // MARK: attachments
+
+  /// Attach a file to the draft: it gets a `[image 2.png]`-style token that the caller puts
+  /// into the input text; the file is sent only if the token is still there on enter.
+  /// Sources: ctrl+v (the clipboard image), a pasted file path, /attach <path>.
+  attach(file: string, label?: string): string | null {
+    try {
+      const a = media.attachment(media.resolvePath(file));
+      const known = this.state.attachments.find((x) => x.file === a.file);
+      if (known) return known.token;
+      if (this.state.attachments.length >= 8) {
+        this.note("at most 8 files per message", "warn");
+        return null;
+      }
+      const name = label ?? a.name;
+      const token = `[${name}]`;
+      this.set({ attachments: [...this.state.attachments, { ...a, name, token }] });
+      return token;
+    } catch (error) {
+      this.failure(error);
+      return null;
+    }
+  }
+
+  /// A pasted line that is a path to a sendable file becomes an attachment instead of text.
+  attachPasted(text: string): string | null {
+    const file = media.attachable(text);
+    return file ? this.attach(file) : null;
+  }
+
+  attachClipboard(): string | null {
+    const file = media.clipboardImage();
+    if (!file) {
+      this.note("no image on the clipboard · /attach <path> sends a file", "warn");
+      return null;
+    }
+    return this.attach(file, `image ${++this.imageSeq}.png`);
+  }
+
+  /// The attachments whose tokens are in the text, in text order.
+  pending(text: string): Attachment[] {
+    return this.state.attachments.filter((a) => text.includes(a.token)).sort((a, b) => text.indexOf(a.token) - text.indexOf(b.token));
+  }
+
+  /// Forget attachments whose tokens are gone from the text (all of them after a send).
+  prune(text = ""): void {
+    const keep = this.state.attachments.filter((a) => text.includes(a.token));
+    if (keep.length !== this.state.attachments.length) this.set({ attachments: keep });
+  }
+
+  private async uploadAll(text: string): Promise<Media[] | undefined> {
+    const list = this.pending(text);
+    if (list.length === 0) return undefined;
+    const out: Media[] = [];
+    for (const a of list) {
+      this.setBusy(`uploading ${a.name}…`);
+      out.push({ ...(await media.upload({ http: this.config.http, token: this.config.token, file: a.file })), name: a.name });
+    }
+    return out;
+  }
+
   // MARK: actions
 
-  async submit(text: string): Promise<void> {
+  /// False when the hub refused it, so the app can give the draft back.
+  async submit(text: string): Promise<boolean> {
     const t = text.trim();
-    if (!t) return;
+    if (!t) {
+      this.prune();
+      return true;
+    }
     this.setBusy("sending…");
     try {
       if (t.startsWith("/")) await this.command(t);
       else if (t.startsWith("@")) await this.directed(t);
       else if (t.startsWith(">")) await this.dispatch(t.slice(1).trim());
       else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel", "warn");
-      else await this.hub!.api.room.say({ room: this.state.room, text: t });
+      else await this.hub!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t) });
+      this.prune();
+      return true;
     } catch (error) {
       this.failure(error);
+      return false;
     } finally {
       this.setBusy(null);
     }
@@ -253,13 +336,13 @@ export class Store {
     }
     if (!body) return this.note(`say something after @${to}`, "warn");
     const kind = member.kind === "agent" ? "command" : "info";
-    const r = await this.hub!.api.agents.send({ to, text: body, kind });
+    const r = await this.hub!.api.agents.send({ to, text: body, kind, media: await this.uploadAll(body) });
     if (!r.delivered) this.note(`${to} is offline, queued until it is back`);
   }
 
   private async dispatch(body: string): Promise<void> {
     if (!body) return this.note("say what to do after @auto", "warn");
-    const r = await this.hub!.api.agents.dispatch({ text: body, room: this.state.room });
+    const r = await this.hub!.api.agents.dispatch({ text: body, room: this.state.room, media: await this.uploadAll(body) });
     this.note(`the hub picked ${r.agent} (${r.reason})${r.delivered ? "" : ", queued"}`);
   }
 
@@ -315,7 +398,11 @@ export class Store {
       }
       case "say":
         if (!arg) return this.note("usage: /say <text>", "warn");
-        await api.room.say({ room: this.state.room, text: arg });
+        await api.room.say({ room: this.state.room, text: arg, media: await this.uploadAll(arg) });
+        break;
+      case "attach":
+        // handled in the app: the token has to land in the input
+        this.note("usage: /attach <path> · or paste a path, or ctrl+v an image from the clipboard", "warn");
         break;
       case "rooms":
         this.push({ type: "rooms", rooms: await api.room.list({}) });

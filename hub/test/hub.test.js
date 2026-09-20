@@ -77,3 +77,30 @@ test('hub: system events, room rollups, and offline on disconnect', async () => 
   assert.ok(history.some((m) => m.kind === 'system' && m.text.startsWith('Alex joined')));
   assert.ok(history.some((m) => m.kind === 'system' && m.text === 'Alex left'));
 });
+
+test('hub: agents take commands from each other only per their accept policy; the rest arrive as notes', async () => {
+  const { hub, ownerConn, agentConn, agentClient } = setup();
+  const auth = hub.auth;
+  const bobClient = fakeClient();
+  const bobConn = hub.bind(bobClient, auth.verify(auth.create({ name: 'b', role: 'agent' }).token), '127.0.0.1');
+  hub.register(bobConn, { name: 'Bob', room: 'dev', accept: 'any' });
+  hub.setStatus(agentConn, 'waiting', 'idle');
+  hub.setStatus(bobConn, 'waiting', 'idle');
+  // Alex registered without accept: a command from Bob becomes a note
+  const toAlex = await hub.send(bobConn, 'Alex', 'run tests');
+  assert.strictEqual(toAlex.kind, 'info');
+  assert.strictEqual(toAlex.downgraded, true);
+  assert.strictEqual(agentClient.events.find(([n, d]) => n === 'agents/message' && d.text === 'run tests')[1].kind, 'info');
+  // Bob takes commands from anyone
+  const toBob = await hub.send(agentConn, 'Bob', 'deploy');
+  assert.strictEqual(toBob.kind, 'command');
+  assert.strictEqual(toBob.downgraded, undefined);
+  // a list of names
+  hub.register(agentConn, { name: 'Alex', room: 'dev', accept: ['Bob'] });
+  hub.setStatus(agentConn, 'waiting', 'idle');
+  assert.strictEqual((await hub.send(bobConn, 'Alex', 'again')).kind, 'command');
+  assert.deepStrictEqual(hub.list(ownerConn).find((m) => m.name === 'Alex').accept, ['Bob']);
+  assert.strictEqual(hub.list(ownerConn).find((m) => m.name === 'Bob').accept, 'any');
+  // the owner always may
+  assert.strictEqual((await hub.send(ownerConn, 'Alex', 'go')).kind, 'command');
+});

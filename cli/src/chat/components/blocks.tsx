@@ -43,7 +43,8 @@ export const MemberRows = ({ members }: { members: Member[] }) => {
     <Box flexDirection="column" paddingLeft={2}>
       {members.map((m) => {
         const state = stateOf(m);
-        const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.caps?.length ? "[" + m.caps.join(",") + "]" : "", m.reason && (state === "blocked" || state === "working") ? "(" + m.reason + ")" : ""].filter(Boolean).join("  ");
+        const accept = m.kind === "agent" && m.accept ? "accepts " + (Array.isArray(m.accept) ? m.accept.join(",") : m.accept) : "";
+        const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.caps?.length ? "[" + m.caps.join(",") + "]" : "", accept, m.reason && (state === "blocked" || state === "working") ? "(" + m.reason + ")" : ""].filter(Boolean).join("  ");
         return (
           <Text key={m.name} wrap="truncate-end">
             <Glyph member={m} animate={false} /> <Name name={padToTerminalWidth(m.name, nameW)} kind={m.kind} /> <Text color={muted}>{padToTerminalWidth(state, 8)}</Text>{" "}
@@ -132,6 +133,7 @@ export const Help = () => {
       <Row k="ctrl+a ctrl+e ctrl+w ctrl+u ctrl+k" v="line start, line end, delete word, kill to start, kill to end" />
       <Row k="alt+← alt+→  alt+b alt+f" v="word left, word right" />
       <Row k="esc esc" v="close the list; twice clears the input" />
+      <Row k="ctrl+v" v="paste the clipboard image as [image 1.png] · pasting a file path gives [name.png]; delete the token to drop the file" />
       <Row k="ctrl+l" v="redraw" />
       <Row k="ctrl+c" v="clear the input, then leave" />
     </Box>
