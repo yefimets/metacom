@@ -21,14 +21,23 @@
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; border-radius: 0 !important; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; }
+  html { height: 100%; overflow: hidden; }
+  /* The body is pinned to the visual viewport: app.js keeps --vh and --vv-top in step with
+     the on-screen keyboard on iOS, where the layout viewport does not shrink. */
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.45 var(--mono);
-    height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+    position: fixed; top: 0; left: 0; width: 100%; height: var(--vh, 100dvh);
+    transform: translateY(var(--vv-top, 0px));
+    display: flex; flex-direction: column; overflow: hidden;
   }
   ::selection { background: var(--fg); color: var(--bg); }
-  button, input, select, textarea { font: inherit; color: inherit; background: transparent; border: 0; outline: 0; margin: 0; }
+  button, input, select, textarea { font: inherit; color: inherit; background: transparent; border: 0; outline: 0; margin: 0; appearance: none; -webkit-appearance: none; }
+  /* iOS Safari zooms the page when a focused field is set below 16px; keep fields at 16px on touch. */
+  @media (pointer: coarse) {
+    input, select, textarea { font-size: 16px; }
+    header .field > select, #composer .field.select > select { font-size: 16px; }
+  }
   button { cursor: pointer; }
 
   /* logo: five lines meeting in the centre. .spin makes it the loader. */
@@ -114,6 +123,8 @@
 
   /* composer */
   #composer { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px); border-top: 1px solid var(--fg); }
+  /* with the keyboard up the home-indicator inset is under the keyboard, not under us */
+  body.keyboard #composer, body.keyboard #screen .keys { padding-bottom: 10px; }
   #composer .line { display: flex; gap: 8px; align-items: stretch; }
   #composer .field.select { flex: 0 0 auto; max-width: 42%; }
   #composer .field.select > select { text-transform: uppercase; font-size: 12px; }

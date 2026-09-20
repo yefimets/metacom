@@ -296,10 +296,35 @@ const start = async (token) => {
   $('login').classList.add('hidden');
 };
 
+// iOS Safari does not shrink the layout viewport for the on-screen keyboard; it shrinks the
+// visual viewport and scrolls it to reveal the focused field, which pushes a fixed-height page
+// off screen. Size the body to the visual viewport and shift it by the viewport's offset so the
+// header, stream and composer stay on screen above the keyboard.
+const vv = window.visualViewport;
+const viewportHeight = () => (vv ? vv.height : window.innerHeight);
+const fitViewport = () => {
+  if (!vv) return;
+  const root = document.documentElement.style;
+  root.setProperty('--vh', Math.round(vv.height) + 'px');
+  root.setProperty('--vv-top', Math.round(vv.offsetTop) + 'px');
+  document.body.classList.toggle('keyboard', window.innerHeight - vv.height > 120);
+  const stream = $('stream');
+  if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80) stream.scrollTop = stream.scrollHeight;
+};
+if (vv) {
+  vv.addEventListener('resize', fitViewport);
+  vv.addEventListener('scroll', fitViewport);
+  fitViewport();
+}
+// Some iOS versions still nudge the document itself; keep it at the top so nothing hides.
+window.addEventListener('scroll', () => {
+  if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+});
+
 const autosize = () => {
   const t = $('text');
   t.style.height = 'auto';
-  t.style.height = Math.min(t.scrollHeight, window.innerHeight * 0.4) + 'px';
+  t.style.height = Math.min(t.scrollHeight, viewportHeight() * 0.4) + 'px';
 };
 $('text').addEventListener('input', autosize);
 
