@@ -132,6 +132,26 @@
   #composer .field.select > select { text-transform: uppercase; font-size: 12px; }
   #composer .field.text { flex: 1; }
   #composer #send { flex: 0 0 auto; height: auto; min-height: 36px; }
+  #composer #attach { flex: 0 0 auto; height: auto; min-height: 36px; width: 36px; padding: 0; font-size: 18px; line-height: 34px; text-align: center; }
+  #composer #attach input { display: none; }
+  /* files queued for the next message: thumbnails with a corner × */
+  #files { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  #files::-webkit-scrollbar { display: none; }
+  #files .file { position: relative; flex: 0 0 auto; width: 56px; height: 56px; border: 1px solid var(--fg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #files .file img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #files .file .ext { font-size: 10px; text-transform: uppercase; color: var(--dim); padding: 0 4px; text-align: center; word-break: break-all; }
+  #files .file .x { position: absolute; top: 0; right: 0; width: 18px; height: 18px; line-height: 18px; text-align: center; background: var(--fg); color: var(--bg); font-size: 12px; }
+  body.dragging #composer { box-shadow: inset 0 0 0 2px var(--fg); }
+  /* attachments on messages */
+  .msg .media { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .msg .media img { max-width: min(100%, 320px); max-height: 240px; display: block; border: 1px solid var(--faint); }
+  .msg .media a { color: var(--fg); }
+  .msg .media a.doc { border: 1px solid var(--fg); padding: 4px 8px; font-size: 12px; text-decoration: none; }
+  @media (max-width: 520px) {
+    #composer .line { flex-wrap: wrap; }
+    #composer .field.select { flex: 1 1 100%; max-width: none; }
+    #composer .field.text { flex: 1 1 0; }
+  }
 
   /* overlays */
   .overlay { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; z-index: 10; }
@@ -181,9 +201,11 @@
 <div id="stream"><div class="empty">no messages</div></div>
 
 <form id="composer" autocomplete="off">
+  <div id="files" class="hidden"></div>
   <div class="line">
     <label class="field select"><span class="prompt">@</span><select id="target" aria-label="target"><option value="auto">auto</option><option value="room">room</option></select></label>
-    <label class="field text"><span class="prompt">&gt;</span><textarea id="text" rows="1" placeholder="instruction" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></label>
+    <label class="field text"><span class="prompt">&gt;</span><textarea id="text" rows="1" placeholder="instruction · paste or drop an image" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></label>
+    <label id="attach" class="btn ghost" title="attach a file">+<input id="fileInput" type="file" accept="image/*,.pdf,.txt,.md" multiple></label>
     <button id="send" class="btn" type="submit">send</button>
   </div>
 </form>

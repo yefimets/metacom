@@ -11,6 +11,7 @@ const { Assistant } = require('./lib/assistant.js');
 const { createContext } = require('./lib/context.js');
 const { guardSockets } = require('./lib/guard.js');
 const { serveWeb } = require('./lib/web.js');
+const { serveMedia } = require('./lib/media.js');
 
 const env = process.env;
 const host = env.HUB_HOST || '127.0.0.1';
@@ -73,6 +74,7 @@ const main = async () => {
     timeouts: { bind: 2000 },
   };
   const server = new Server(context, options);
+  serveMedia(server.httpServer, { media: hub.media, auth, console });
   serveWeb(server.httpServer, path.join(__dirname, 'web'));
   guardSockets(server.wsServer, console);
   await server.listen();
