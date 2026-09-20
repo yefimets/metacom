@@ -8,7 +8,10 @@
     "mc": "bin/mc.js"
   },
   "scripts": {
-    "postinstall": "node scripts/fix-pty.js"
+    "postinstall": "node scripts/fix-pty.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:tui": "node test/tui-smoke.js && node test/tui-scenarios.js",
+    "termcn": "node scripts/termcn-sync.js"
   },
   "engines": {
     "node": ">=22"
@@ -16,8 +19,18 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@xterm/headless": "^6.0.0",
+    "cli-spinners": "^3.4.0",
+    "ink": "^7.1.1",
     "metacom": "file:../metacom",
     "node-pty": "^1.1.0",
+    "react": "^19.3.0",
+    "string-width": "^8.2.0",
+    "tsx": "^4.23.13",
     "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
   }
 }

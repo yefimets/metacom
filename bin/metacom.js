@@ -5,6 +5,7 @@ const os = require('node:os');
 const config = require('../lib/config.js');
 const { line, member } = require('../lib/format.js');
 
+
 const RESERVED = new Set(['login', 'token', 'tokens', 'agents', 'send', 'say', 'tail', 'rooms', 'read', 'wait', 'seen', 'mcp', 'help', '-h', '--help']);
 
 const usage = `metacom – join agents and yourself to the metacom hub (mc is a short alias)
@@ -13,7 +14,7 @@ const usage = `metacom – join agents and yourself to the metacom hub (mc is a 
       --agent-token T    token agents on this machine use (role agent); owner token stays for you
   metacom <room> -n <name> [opts] [-- cmd…]  join the room; with a command, run it (claude, codex, …) and
                                         type owner instructions into it when it is idle. Without a
-                                        command, an interactive chat.
+                                        command, an interactive chat (--theme dracula, --plain for a bare one).
       --repo PATH        repository the agent works in (default: cwd)
       --caps a,b,c       capabilities used for routing, e.g. swift,ios,node
       --accept owner|any also type commands sent by other agents (default owner)
@@ -74,6 +75,10 @@ const parse = (argv, { command = false } = {}) => {
       opts.timeout = Number(argv[++i]);
     } else if (a === '--no-mcp') {
       opts.mcp = false;
+    } else if (a === '--plain') {
+      opts.plain = true;
+    } else if (a === '--theme') {
+      opts.theme = argv[++i];
     } else if (a.startsWith('-') && a.length > 1) {
       throw new Error(`unknown option ${a}`);
     } else {
@@ -115,7 +120,9 @@ const main = async () => {
     const name = opts.name || os.userInfo().username;
     if (rest.length === 0) {
       const { chat } = require('../lib/chat.js');
-      await chat({ name, room, config: { ...cfg, room } });
+      // The chat is you, not an agent: the token saved by `metacom login` wins over MC_TOKEN,
+      // which the wrapper exports into agent sessions and any shell opened from them.
+      await chat({ name, room, config: { ...cfg, room, token: cfg.fileToken || cfg.token }, plain: opts.plain, theme: opts.theme });
       return;
     }
     const { wrap } = require('../lib/wrap.js');
@@ -184,8 +191,9 @@ const main = async () => {
       case 'tail': {
         const room = opts.room || cfg.room;
         await hub.api.room.join({ room });
-        for (const m of await hub.api.room.history({ room, limit: 20 })) out(line(m));
-        hub.api.room.on('message', (m) => out(line(m)));
+        const render = (m) => (opts.json ? JSON.stringify(m) : line(m));
+        for (const m of await hub.api.room.history({ room, limit: 20 })) out(render(m));
+        hub.api.room.on('message', (m) => out(render(m)));
         return;
       }
       case 'token': {
