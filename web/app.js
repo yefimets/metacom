@@ -168,7 +168,7 @@ const renderAgents = () => {
     const status = m.connected ? m.status : 'stopped';
     const card = el('div', `agent ${status}${done ? ' done' : ''}${keep === m.name ? ' selected' : ''}`);
     const title = el('div', 'name');
-    title.append(glyphFor(m), document.createTextNode(m.name));
+    title.append(glyphFor(m), el('span', '', m.name));
     card.append(title);
     if (m.connected && m.status === 'blocked') card.append(el('span', 'tag', 'needs you'));
     else if (done) card.append(el('span', 'tag', 'done'));
