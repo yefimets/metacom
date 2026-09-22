@@ -1,27 +1,26 @@
-# Hub on a VPS behind Caddy, which gets a Let's Encrypt certificate for HUB_DOMAIN and
-# terminates TLS, so agents and the phone connect over wss://. The hub itself is not
+# Org on a VPS behind Caddy, which gets a Let's Encrypt certificate for MC_DOMAIN and
+# terminates TLS, so agents and the phone connect over wss://. The org itself is not
 # exposed; only Caddy publishes ports 80 and 443.
 #
-#   cp .env.example .env && edit HUB_DOMAIN
+#   cp .env.example .env && edit MC_DOMAIN
 #   docker compose up -d --build
-#   docker compose exec hub cat /data/bootstrap-token.txt   # once, then delete it
+#   docker compose exec org cat /data/bootstrap-token.txt   # once, then delete it
 services:
-  hub:
+  org:
     build:
       context: ../..
-      dockerfile: hub/Dockerfile
+      dockerfile: org/Dockerfile
     restart: unless-stopped
     environment:
-      HUB_HOST: 0.0.0.0
-      HUB_PORT: 8900
-      HUB_DATA: /data
-      HUB_CORS: https://${HUB_DOMAIN}
+      MC_HOST: 0.0.0.0
+      MC_PORT: 8900
+      MC_DATA: /data
+      MC_CORS: https://${MC_DOMAIN}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      HUB_ROUTER_MODEL: ${HUB_ROUTER_MODEL:-google/gemini-2.5-flash}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_OWNER: ${TELEGRAM_OWNER:-}
     volumes:
-      - hub-data:/data
+      - data:/data
     expose:
       - "8900"
 
@@ -32,15 +31,15 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      HUB_DOMAIN: ${HUB_DOMAIN}
+      MC_DOMAIN: ${MC_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      - hub
+      - org
 
 volumes:
-  hub-data:
+  data:
   caddy-data:
   caddy-config:

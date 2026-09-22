@@ -4,7 +4,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const dir = path.join(os.homedir(), '.config', 'metacom-hub');
+
+/// The directory used to be called metacom-hub; an existing one is moved over on first use.
+const inherit = (dir) => {
+  const old = dir.replace(/metacom$/, 'metacom-hub');
+  try {
+    if (!fs.existsSync(dir) && fs.existsSync(old)) fs.renameSync(old, dir);
+  } catch {
+    // leave both in place
+  }
+  return dir;
+};
+const dir = inherit(path.join(os.homedir(), '.config', 'metacom'));
 const file = path.join(dir, 'config.json');
 
 const toWs = (url) => url.replace(/^http/, 'ws').replace(/\/+$/, '') + '/';
@@ -18,7 +29,7 @@ const load = () => {
     stored = {};
   }
   const env = process.env;
-  const url = env.MC_HUB_URL || stored.url || 'ws://127.0.0.1:8900/';
+  const url = env.MC_URL || stored.url || 'ws://127.0.0.1:8900/';
   return {
     url: toWs(url),
     http: toHttp(url),
@@ -43,4 +54,4 @@ const save = (values) => {
   return next;
 };
 
-module.exports = { load, save, file, toWs, toHttp };
+module.exports = { inherit, load, save, file, toWs, toHttp };

@@ -6,8 +6,8 @@ const { validate, schema } = require('../lib/tools.js');
 
 test('tools: valid calls are typed and cleaned', () => {
   assert.deepStrictEqual(validate('switch_flow', { flow: '3', extra: 1 }).args, { flow: 3 });
-  assert.deepStrictEqual(validate('message_agent', { agent: 'auto', text: 'go' }).args, { agent: 'auto', text: 'go' });
-  assert.strictEqual(validate('message_agent', { agent: 'x', text: 'y' }).tool.where, 'hub');
+  assert.deepStrictEqual(validate('message_agent', { agent: 'Alex', text: 'go' }).args, { agent: 'Alex', text: 'go' });
+  assert.strictEqual(validate('message_agent', { agent: 'x', text: 'y' }).tool.where, 'org');
   assert.strictEqual(validate('new_flow', null).error, undefined);
 });
 

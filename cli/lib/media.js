@@ -17,7 +17,7 @@ const TYPES = {
   '.txt': 'text/plain',
   '.md': 'text/markdown',
 };
-const MEDIA_DIR = path.join(os.homedir(), '.local', 'share', 'metacom-hub', 'media');
+const MEDIA_DIR = path.join(os.homedir(), '.local', 'share', 'metacom', 'media');
 
 const typeOf = (file) => TYPES[path.extname(file).toLowerCase()] || null;
 
@@ -54,7 +54,7 @@ const attachment = (file) => {
 
 const pretty = (bytes) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
-/// POST the file to the hub; returns the media record to put on a message.
+/// POST the file to the mc; returns the media record to put on a message.
 const upload = async ({ http, token, file }) => {
   const a = attachment(file);
   const res = await fetch(`${http}/media`, {

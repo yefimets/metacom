@@ -1,6 +1,6 @@
 'use strict';
 
-/// The closed, typed tool set of the assistant. `where` says who executes a call: the hub
+/// The closed, typed tool set of the assistant. `where` says who executes a call: the org
 /// itself, or Flow on the Mac. Calls are validated against these schemas before anything
 /// runs or is returned; a call that does not fit is refused, never executed.
 const flow = { type: 'integer', minimum: 1, maximum: 9, description: 'Flow number 1-9' };
@@ -14,11 +14,11 @@ const tool = (name, where, description, properties = {}, required = []) => ({
 });
 
 const TOOLS = [
-  tool('message_agent', 'hub', 'Send an instruction to a coding agent connected to the hub, by its exact name from "Agents on the hub", wherever it runs (this Mac or a server). Use agent "auto" to let the hub pick the best agent for the task.',
+  tool('message_agent', 'org', 'Send an instruction to a coding agent, by its exact name from "Agents", wherever it runs (this Mac or a server).',
     { agent: { type: 'string' }, text: { type: 'string' } }, ['agent', 'text']),
-  tool('read_agent', 'hub', 'Read the last lines of an agent\'s terminal screen, to tell the user what it is doing or what question it is blocked on.',
+  tool('read_agent', 'org', 'Read the last lines of an agent\'s terminal screen, to tell the user what it is doing or what question it is blocked on.',
     { agent: { type: 'string' }, lines: { type: 'integer', minimum: 5, maximum: 200 } }, ['agent']),
-  tool('say_to_room', 'hub', 'Post a short message to the room that every agent will read. Use it for information meant for all agents, not for an instruction to one.',
+  tool('say_to_room', 'org', 'Post a short message to the room that every agent will read. Use it for information meant for all agents, not for an instruction to one.',
     { text: { type: 'string' } }, ['text']),
   tool('switch_flow', 'flow', 'Switch to a flow (workspace). Creates it if missing.', { flow }, ['flow']),
   tool('move_window_to_flow', 'flow', 'Move the focused window to a flow and follow it.', { flow }, ['flow']),
@@ -35,9 +35,9 @@ const TOOLS = [
   tool('open_url', 'flow', 'Open a URL in the default browser.', { url: { type: 'string' } }, ['url']),
   tool('screenshot_flow', 'flow', 'Capture every window of a flow to PNG files (current flow if omitted).', { flow }),
   tool('say', 'flow', 'Tell the user something short. Use it only to ask one clarifying question or to report that you cannot proceed.', { text: { type: 'string' } }, ['text']),
-  tool('start_agent', 'flow', 'Start a coding agent (Claude Code) in a repository: a new flow named after it with a terminal running the agent, joined to the hub.',
+  tool('start_agent', 'flow', 'Start a coding agent (Claude Code) in a repository: a new flow named after it with a terminal running the agent, joined to the org.',
     { repo: { type: 'string', description: 'Folder path, ~ allowed' }, name: { type: 'string' } }, ['repo']),
-  tool('send_to_agent', 'flow', 'Type a message into the agent terminal of a flow on this Mac and press return. Only for terminals that are not listed under "Agents on the hub".',
+  tool('send_to_agent', 'flow', 'Type a message into the agent terminal of a flow on this Mac and press return. Only for terminals that are not listed under "Agents".',
     { flow, text: { type: 'string' } }, ['flow', 'text']),
   tool('web_search', 'flow', 'Open Chrome in the current flow with a Google search for the query.', { query: { type: 'string' } }, ['query']),
   tool('create_note', 'flow', 'Create a note in Apple Notes with a title and body text.', { title: { type: 'string' }, body: { type: 'string' } }, ['title']),

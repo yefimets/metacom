@@ -2,7 +2,7 @@
 
 const { Metacom } = require('metacom');
 
-/// Connects, scaffolds the hub API, signs in, and signs in again after every reconnect.
+/// Connects, scaffolds the mc API, signs in, and signs in again after every reconnect.
 /// `onOpen` runs after each re-sign-in, so a wrapper can re-register its member.
 const connect = async ({ url, token, onOpen = null, callTimeout = 620_000 }) => {
   if (!token) throw new Error('No token. Run: metacom login <url> <token>');

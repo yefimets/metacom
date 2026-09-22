@@ -2,7 +2,7 @@ import os from "node:os";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { connect } = require("../../lib/client.js") as { connect: (o: object) => Promise<Hub> };
+const { connect } = require("../../lib/client.js") as { connect: (o: object) => Promise<Connection> };
 const media = require("../../lib/media.js") as {
   attachment: (file: string) => Omit<Attachment, "token">;
   attachable: (text: string) => string | null;
@@ -14,7 +14,7 @@ const media = require("../../lib/media.js") as {
 export type Media = { url: string; type: string; size: number; name: string };
 export type Attachment = { file: string; name: string; type: string; size: number; token: string };
 
-export type Kind = "agent" | "human" | "system" | "route";
+export type Kind = "agent" | "human" | "system";
 export type Member = {
   name: string;
   kind: Kind;
@@ -64,7 +64,7 @@ export type State = {
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
-type Hub = { m: { close: () => void; on: (e: string, fn: () => void) => void }; api: Api; me: { name: string; role: string } };
+type Connection = { m: { close: () => void; on: (e: string, fn: () => void) => void }; api: Api; me: { name: string; role: string } };
 
 export type Config = { url: string; http: string; token: string | null; agentToken?: string | null; room: string };
 
@@ -86,7 +86,7 @@ export const COMMANDS = [
 
 export const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
 
-/// One-word state for a member as humans think of it, not the raw hub status.
+/// One-word state for a member as humans think of it, not the raw mc status.
 export const stateOf = (m: Member): string => {
   if (!m.connected) return "offline";
   if (m.kind === "human") return "online";
@@ -98,11 +98,11 @@ export const stateOf = (m: Member): string => {
 let seq = 0;
 const id = () => `e${++seq}`;
 
-/// Everything about the room that is not rendering: the hub connection, members, the log
+/// Everything about the room that is not rendering: the mc connection, members, the log
 /// of what is on screen, and the actions the composer triggers. React subscribes to it.
 export class Store {
   state: State;
-  hub: Hub | null = null;
+  mc: Connection | null = null;
   private listeners = new Set<() => void>();
   private lastMessage: { name: string; ts: number; to?: string } | null = null;
   private states = new Map<string, string>();
@@ -146,41 +146,41 @@ export class Store {
   async start(): Promise<void> {
     const { room } = this.state;
     const name = this.state.me.name;
-    const hub: Hub = await connect({ url: this.config.url, token: this.config.token, onOpen: () => this.join(true) });
-    this.hub = hub;
-    this.set({ me: { name, role: hub.me.role } });
+    const mc: Connection = await connect({ url: this.config.url, token: this.config.token, onOpen: () => this.join(true) });
+    this.mc = mc;
+    this.set({ me: { name, role: mc.me.role } });
     try {
       await this.join(false);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (/belongs to another token/.test(msg)) {
         const env = process.env["MC_TOKEN"] ? " MC_TOKEN is set in this shell and points at an agent token; unset it or run metacom login again." : "";
-        throw new Error(`${msg}. You signed in with a ${hub.me.role} token, and only an owner token can take a name over.${env} Otherwise pick another name with -n.`);
+        throw new Error(`${msg}. You signed in with a ${mc.me.role} token, and only an owner token can take a name over.${env} Otherwise pick another name with -n.`);
       }
       throw error;
     }
-    hub.api.room.on("message", (m: Message) => this.onMessage(m));
-    hub.api.agents.on("changed", ({ members }: { members: Member[] }) => this.onMembers(members));
-    hub.api.agents.on("message", (m: Message) => {
+    mc.api.room.on("message", (m: Message) => this.onMessage(m));
+    mc.api.agents.on("changed", ({ members }: { members: Member[] }) => this.onMembers(members));
+    mc.api.agents.on("message", (m: Message) => {
       if (m.from && m.from.name !== name) this.onBell();
     });
-    hub.m.on("close", () => this.setBusy("reconnecting…"));
-    hub.m.on("open", () => this.setBusy(null));
+    mc.m.on("close", () => this.setBusy("reconnecting…"));
+    mc.m.on("open", () => this.setBusy(null));
     this.push({ type: "banner" });
-    const history: Message[] = await hub.api.room.history({ room, limit: 30 });
-    this.onMembers(await hub.api.agents.list({}));
+    const history: Message[] = await mc.api.room.history({ room, limit: 30 });
+    this.onMembers(await mc.api.agents.list({}));
     for (const m of history) this.push({ type: "message", msg: m, grouped: this.group(m) });
     if (history.length) this.push({ type: "rule", text: "now" });
   }
 
   private async join(again: boolean): Promise<void> {
-    const hub = this.hub!;
+    const mc = this.mc!;
     const { room } = this.state;
     const name = this.state.me.name;
-    const kind = hub.me.role === "owner" ? "human" : "agent";
-    await hub.api.agents.register({ name, room, kind, host: os.hostname() });
-    if (kind === "human") await hub.api.room.join({ room });
-    await hub.api.agents.status({ status: "waiting" });
+    const kind = mc.me.role === "owner" ? "human" : "agent";
+    await mc.api.agents.register({ name, room, kind, host: os.hostname() });
+    if (kind === "human") await mc.api.room.join({ room });
+    await mc.api.agents.status({ status: "waiting" });
     if (again) this.note("reconnected", "ok");
   }
 
@@ -291,7 +291,7 @@ export class Store {
 
   // MARK: actions
 
-  /// False when the hub refused it, so the app can give the draft back.
+  /// False when the mc refused it, so the app can give the draft back.
   async submit(text: string): Promise<boolean> {
     const t = text.trim();
     if (!t) {
@@ -302,9 +302,8 @@ export class Store {
     try {
       if (t.startsWith("/")) await this.command(t);
       else if (t.startsWith("@")) await this.directed(t);
-      else if (t.startsWith(">")) await this.dispatch(t.slice(1).trim());
       else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel", "warn");
-      else await this.hub!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t) });
+      else await this.mc!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t) });
       this.prune();
       return true;
     } catch (error) {
@@ -327,29 +326,22 @@ export class Store {
     const m = t.match(/^@([^\s]+)\s*([\s\S]*)$/)!;
     const to = m[1]!;
     const body = m[2]!.trim();
-    if (to === "auto") return this.dispatch(body);
     const member = this.state.members.get(to);
     if (!member) {
-      await this.hub!.api.room.say({ room: this.state.room, text: t });
+      await this.mc!.api.room.say({ room: this.state.room, text: t });
       this.note(`posted to the room as text (nobody called ${to} is here)`);
       return;
     }
     if (!body) return this.note(`say something after @${to}`, "warn");
     const kind = member.kind === "agent" ? "command" : "info";
-    const r = await this.hub!.api.agents.send({ to, text: body, kind, media: await this.uploadAll(body) });
+    const r = await this.mc!.api.agents.send({ to, text: body, kind, media: await this.uploadAll(body) });
     if (!r.delivered) this.note(`${to} is offline, queued until it is back`);
-  }
-
-  private async dispatch(body: string): Promise<void> {
-    if (!body) return this.note("say what to do after @auto", "warn");
-    const r = await this.hub!.api.agents.dispatch({ text: body, room: this.state.room, media: await this.uploadAll(body) });
-    this.note(`the hub picked ${r.agent} (${r.reason})${r.delivered ? "" : ", queued"}`);
   }
 
   private async command(t: string): Promise<void> {
     const [cmd, ...rest] = t.slice(1).split(/\s+/);
     const arg = rest.join(" ");
-    const api = this.hub!.api;
+    const api = this.mc!.api;
     switch (cmd) {
       case "help":
         this.push({ type: "help" });
@@ -434,7 +426,7 @@ export class Store {
 
   quit(): void {
     try {
-      this.hub?.m.close();
+      this.mc?.m.close();
     } catch {
       // already closed
     }

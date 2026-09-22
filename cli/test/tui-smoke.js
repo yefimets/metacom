@@ -1,5 +1,5 @@
 'use strict';
-// Drives the chat in a pty against the running hub. Prints screens so a human can look too.
+// Drives the chat in a pty against the running mc. Prints screens so a human can look too.
 const { spawnChat, sleep } = require('./tui-driver.js');
 const { connect } = require('../lib/client.js');
 const config = require('../lib/config.js');

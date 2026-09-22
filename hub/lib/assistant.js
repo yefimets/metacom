@@ -8,13 +8,13 @@ const { fail } = require('./errors.js');
 const MAX_ROUNDS = 5;
 const SESSION_TTL = 5 * 60 * 1000;
 
-/// The voice assistant's brain, moved from Flow into the hub. Flow sends the transcript and
-/// what it sees on screen; the hub runs the model over the typed tool set, executes the hub
+/// The voice assistant's brain, moved from Flow into the org. Flow sends the transcript and
+/// what it sees on screen; the org runs the model over the typed tool set, executes the org
 /// tools itself (agents, room) and hands Flow only validated local actions to perform. Flow
 /// reports their results with `resume`, and the loop continues, at most five model rounds.
 class Assistant {
-  constructor({ hub, console, apiKey, model }) {
-    this.hub = hub;
+  constructor({ org, console, apiKey, model }) {
+    this.org = org;
     this.console = console;
     this.apiKey = apiKey || null;
     this.model = model || 'google/gemini-2.5-flash';
@@ -31,7 +31,7 @@ class Assistant {
   }
 
   system({ conn, room, state, history, name }) {
-    const agents = this.hub.list(conn, room).filter((m) => m.kind === 'agent');
+    const agents = this.org.list(conn, room).filter((m) => m.kind === 'agent');
     const online = agents.filter((m) => m.connected);
     const listed = (online.length ? online : agents)
       .map((m) => `  ${m.name}: ${m.connected ? m.status : 'offline'}, room ${m.room}${m.host ? ', host ' + m.host : ''}${m.repo ? ', repo ' + m.repo : ''}${m.caps?.length ? ', can: ' + m.caps.join(' ') : ''}`)
@@ -42,8 +42,9 @@ Agent statuses: working, waiting (idle), blocked (stuck on a question or permiss
 the owner answers with a control command like "!keys enter" or "!cancel"), done (finished, not looked at yet). \
 To answer "what is X doing", call read_agent and then say a one-sentence summary. \
 Do what the user asks by calling tools; call several when the request needs it. \
-message_agent sends an instruction to an agent listed under "Agents on the hub", by exact name, or with "auto" when \
-the user does not name one; prefer it over send_to_agent, which only types into a terminal on this Mac. \
+message_agent sends an instruction to an agent listed under "Agents", by exact name; when the user does not name \
+one, pick the agent whose repository or capabilities fit, or ask with say. Prefer it over send_to_agent, which only \
+types into a terminal on this Mac. \
 say_to_room is for information every agent should know. For notes use create_note. For searching the web use web_search. \
 type_text and press_key act on the focused app; start_agent needs an existing repository path from the list in the \
 current state; if the user names a project you cannot match to that list, ask with say instead of guessing. \
@@ -53,7 +54,7 @@ Do the job silently: do not narrate or confirm. Use say only when you cannot pro
 clarifying question, in the user's language. Never invent flow numbers the user did not mention. \
 Use the conversation history and the recent actions to resolve references like "again", "that one", \
 "the other flow" and "go back".
-Agents on the hub:
+Agents:
 ${listed || '  (none connected)'}
 Current state on the Mac:
 ${state || '(unknown)'}
@@ -62,7 +63,7 @@ ${history || '(none)'}`;
   }
 
   async ask(conn, { text, state = '', history = '', room, model, name = 'Flow' } = {}) {
-    if (!this.enabled) throw fail(501, 'The hub has no OPENROUTER_API_KEY; the assistant is off');
+    if (!this.enabled) throw fail(501, 'The org has no OPENROUTER_API_KEY; the assistant is off');
     if (typeof text !== 'string' || !text.trim()) throw fail(400, 'text is required');
     this.sweep();
     const session = {
@@ -112,7 +113,7 @@ ${history || '(none)'}`;
           session.messages.push({ role: 'tool', tool_call_id: call.id, content: `refused: ${checked.error}` });
           continue;
         }
-        if (checked.tool.where === 'hub') {
+        if (checked.tool.where === 'org') {
           const result = await this.execute(session, call.name, checked.args);
           session.actions.push(`${call.name}: ${result}`);
           session.messages.push({ role: 'tool', tool_call_id: call.id, content: result });
@@ -141,22 +142,18 @@ ${history || '(none)'}`;
     const { conn } = session;
     try {
       if (name === 'message_agent') {
-        if (args.agent === 'auto') {
-          const r = await this.hub.dispatch(conn, args.text, session.room);
-          return `${r.delivered ? 'delivered to' : 'queued for offline'} ${r.agent} (${r.reason})`;
-        }
-        const r = this.hub.send(conn, args.agent, args.text, 'command');
+        const r = this.org.send(conn, args.agent, args.text, 'command');
         return `${r.delivered ? 'delivered to' : 'queued for offline'} ${r.to}`;
       }
       if (name === 'read_agent') {
-        const r = await this.hub.read(conn, args.agent, args.lines || 40);
+        const r = await this.org.read(conn, args.agent, args.lines || 40);
         return r.text.trim() ? r.text : '(empty screen)';
       }
       if (name === 'say_to_room') {
-        const msg = this.hub.say(conn, session.room, args.text);
+        const msg = this.org.say(conn, session.room, args.text);
         return `posted to room ${msg.room}`;
       }
-      return 'refused: not a hub tool';
+      return 'refused: not a org tool';
     } catch (error) {
       return `failed: ${error.message}`;
     }

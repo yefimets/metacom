@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { Hub } = require('../lib/hub.js');
+const { Org } = require('../lib/org.js');
 const { Auth } = require('../lib/auth.js');
 const { Telegram, parse, format } = require('../lib/telegram.js');
 
@@ -39,18 +39,18 @@ const fakeTelegram = () => {
 };
 
 const setup = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-tg-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-tg-'));
   const auth = new Auth(dir, quiet);
-  const hub = new Hub({ dataDir: dir, auth, console: quiet });
+  const org = new Org({ dataDir: dir, auth, console: quiet });
   const owner = auth.verify(fs.readFileSync(path.join(dir, 'bootstrap-token.txt'), 'utf8').trim());
-  const ownerConn = hub.bind(fakeClient(), owner, '127.0.0.1');
+  const ownerConn = org.bind(fakeClient(), owner, '127.0.0.1');
   const agentTok = auth.create({ name: 'a', role: 'agent' });
   const agentClient = fakeClient();
-  const agentConn = hub.bind(agentClient, auth.verify(agentTok.token), '127.0.0.1');
-  hub.register(agentConn, { name: 'Alex', room: 'dev', host: 'vm' });
-  hub.setStatus(agentConn, 'waiting', 'idle');
+  const agentConn = org.bind(agentClient, auth.verify(agentTok.token), '127.0.0.1');
+  org.register(agentConn, { name: 'Alex', room: 'dev', host: 'vm' });
+  org.setStatus(agentConn, 'waiting', 'idle');
   const tg = fakeTelegram();
-  const telegram = new Telegram({ hub, console: quiet, botToken: 't', dataDir: dir, fetchImpl: tg.fetchImpl });
+  const telegram = new Telegram({ org, console: quiet, botToken: 't', dataDir: dir, fetchImpl: tg.fetchImpl });
   telegram.start();
   // one poll round: getUpdates returns what was queued, then each update is handled
   const round = async () => {
@@ -59,19 +59,18 @@ const setup = () => {
     await telegram.queue;
   };
   telegram.stop();
-  return { dir, hub, ownerConn, agentConn, agentClient, tg, telegram, round };
+  return { dir, org, ownerConn, agentConn, agentClient, tg, telegram, round };
 };
 
 test('telegram: parse mirrors the phone composer', () => {
   assert.deepStrictEqual(parse('@Alex run tests'), { kind: 'command', to: 'Alex', text: 'run tests' });
-  assert.deepStrictEqual(parse('@auto fix the build'), { kind: 'dispatch', text: 'fix the build' });
   assert.deepStrictEqual(parse('@room hi all'), { kind: 'say', text: 'hi all' });
   assert.deepStrictEqual(parse('plain words'), { kind: 'say', text: 'plain words' });
-  assert.deepStrictEqual(parse('/join@hubbot dev'), { kind: 'slash', name: 'join', arg: 'dev' });
+  assert.deepStrictEqual(parse('/join@mcbot dev'), { kind: 'slash', name: 'join', arg: 'dev' });
 });
 
 test('telegram: format hides system lines and what came from the group', () => {
-  assert.strictEqual(format({ kind: 'system', from: { name: 'hub' }, text: 'x joined' }), null);
+  assert.strictEqual(format({ kind: 'system', from: { name: 'org' }, text: 'x joined' }), null);
   assert.strictEqual(format({ kind: 'say', from: { name: 'tg:misha' }, text: 'echo' }), null);
   assert.strictEqual(format({ kind: 'command', from: { name: 'misha' }, to: 'Alex', text: 'go', media: [{ name: 'a.png' }] }), 'misha > Alex: go [a.png]');
 });
@@ -90,30 +89,30 @@ test('telegram: first /join claims the owner, binds the group, and strangers onl
 });
 
 test('telegram: owner messages flow into the room and to agents, the room flows back', async () => {
-  const { hub, tg, agentClient, round, telegram } = setup();
+  const { org, tg, agentClient, round, telegram } = setup();
   telegram.owner = 'misha';
   tg.say('/join dev');
   tg.say('hello room');
   tg.say('@Alex run tests');
   tg.say('ignored', tg.stranger);
   await round();
-  const history = hub.history(hub.local('t'), 'dev', 50);
+  const history = org.history(org.local('t'), 'dev', 50);
   assert.ok(history.some((m) => m.kind === 'say' && m.text === 'hello room' && m.from.name === 'tg:misha'));
   assert.ok(agentClient.events.some(([n, d]) => n === 'agents/message' && d.text === 'run tests' && d.kind === 'command'));
   assert.ok(!history.some((m) => m.text === 'ignored'));
   // nothing typed in the group is echoed back to it
   assert.ok(!tg.sent.some((s) => /hello room|run tests/.test(s.text)));
   // an agent's answer in the room reaches the group; so does a blocked agent
-  const agentConn = hub.conns.get(agentClient);
-  hub.say(agentConn, 'dev', 'tests pass');
-  hub.setStatus(agentConn, 'blocked', 'screen: Do you want to proceed?');
+  const agentConn = org.conns.get(agentClient);
+  org.say(agentConn, 'dev', 'tests pass');
+  org.setStatus(agentConn, 'blocked', 'screen: Do you want to proceed?');
   await telegram.queue;
   assert.ok(tg.sent.some((s) => s.chat_id === '-100' && s.text === 'Alex: tests pass'));
   assert.ok(tg.sent.some((s) => s.text === 'Alex needs you: Do you want to proceed?'));
 });
 
 test('telegram: /agents lists the room, /read asks the wrapper for the screen', async () => {
-  const { hub, tg, agentClient, round, telegram } = setup();
+  const { org, tg, agentClient, round, telegram } = setup();
   telegram.owner = '42';
   tg.say('/join dev');
   tg.say('/agents');
@@ -121,10 +120,10 @@ test('telegram: /agents lists the room, /read asks the wrapper for the screen', 
   assert.match(tg.sent.at(-1).text, /waiting {2}Alex @ vm/);
   tg.say('/read Alex');
   const reading = round();
-  // the wrapper answers the read request the hub sent it
+  // the wrapper answers the read request the org sent it
   await new Promise((r) => setTimeout(r, 20));
   const req = agentClient.events.find(([n]) => n === 'agents/readRequest');
-  hub.readReply(hub.conns.get(agentClient), req[1].id, '> claude\n$ ');
+  org.readReply(org.conns.get(agentClient), req[1].id, '> claude\n$ ');
   await reading;
   assert.match(tg.sent.at(-1).text, /claude/);
   assert.strictEqual(tg.sent.at(-1).parse_mode, 'Markdown');

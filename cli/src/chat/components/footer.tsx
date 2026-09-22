@@ -26,7 +26,6 @@ export const Footer = ({ text, busy, members, room, attachments = 0 }: { text: s
   if (head) {
     const name = head[1]!;
     const m = members.get(name);
-    if (name === "auto") return line(<Text color={muted}>enter sends it{files} to whichever agent the hub picks</Text>);
     if (!m)
       return line(
         <Text>

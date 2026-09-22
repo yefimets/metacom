@@ -10,7 +10,7 @@ const RESERVED = new Set(['login', 'token', 'tokens', 'agents', 'send', 'say', '
 
 const usage = `metacom – join agents and yourself to metacom (mc is a short alias)
 
-  metacom login <url> <token> [--room R]     save hub url and token (~/.config/metacom-hub/config.json)
+  metacom login <url> <token> [--room R]     save mc url and token (~/.config/metacom/config.json)
       --agent-token T    token agents on this machine use (role agent); owner token stays for you
   metacom <room> -n <name> [opts] [-- cmd…]  join the room; with a command, run it (claude, codex, …) and
                                         type owner instructions into it when it is idle. Without a
@@ -18,13 +18,13 @@ const usage = `metacom – join agents and yourself to metacom (mc is a short al
       --repo PATH        repository the agent works in (default: cwd)
       --caps a,b,c       capabilities used for routing, e.g. swift,ios,node
       --accept any|owner|a,b   whose commands get typed in: any agent (default), only you, or named agents
-      --no-mcp           do not give claude the hub_* MCP tools
-  metacom agents [--room R]                  who is on the hub and their status
+      --no-mcp           do not give claude the mc_* MCP tools
+  metacom agents [--room R]                  who is on the mc and their status
                                              ● online  ! blocked on a question  * done, not looked at yet
   metacom read <name> [--lines N]            the agent's screen (owner only)
   metacom wait <name> [--until a,b] [--timeout S]   block until the agent is waiting/blocked/stopped
   metacom seen <name>                        clear the done badge
-  metacom send <name|auto> <text…> [--wait]  instruction to an agent; auto lets the hub pick;
+  metacom send <name> <text…> [--wait]       instruction to an agent;
                                              --wait returns when the agent finishes the turn
       --file PATH        attach an image or document (repeatable); the agent gets it as a local path
       !cancel  !stop  !keys enter|esc|up|y  !type text    control commands: act at once, never typed as text
@@ -34,7 +34,7 @@ const usage = `metacom – join agents and yourself to metacom (mc is a short al
   metacom token <name> --role owner|agent    create a token (owner only), prints it once
       --save             store it as this machine's agent token in the config
   metacom tokens                             list tokens (owner only)
-  --json on any command prints the raw hub reply
+  --json on any command prints the raw mc reply
 `;
 
 const parse = (argv, { command = false } = {}) => {
@@ -134,9 +134,9 @@ const main = async () => {
   }
 
   const { opts, rest } = parse(argv.slice(1));
-  const hub = await connect({ url: cfg.url, token: cfg.token });
+  const mc = await connect({ url: cfg.url, token: cfg.token });
   const done = () => {
-    hub.m.close();
+    mc.m.close();
     process.stdout.write('', () => process.exit(0));
   };
   const out = (s) => process.stdout.write(s + '\n');
@@ -151,66 +151,61 @@ const main = async () => {
   try {
     switch (first) {
       case 'agents': {
-        show(await hub.api.agents.list({ room: opts.room }), (list) => list.map(member).join('\n') || '(nobody)');
+        show(await mc.api.agents.list({ room: opts.room }), (list) => list.map(member).join('\n') || '(nobody)');
         break;
       }
       case 'rooms': {
-        show(await hub.api.room.list({}), (rooms) =>
+        show(await mc.api.room.list({}), (rooms) =>
           rooms.map((r) => `${r.room.padEnd(16)} ${r.online}/${r.agents} online, ${r.working} working, ${r.blocked} blocked, ${r.attention} done`).join('\n'));
         break;
       }
       case 'read': {
         const [name] = rest;
         if (!name) throw new Error('usage: metacom read <name> [--lines N]');
-        show(await hub.api.agents.read({ name, lines: opts.lines || 40 }), (r) => r.text);
+        show(await mc.api.agents.read({ name, lines: opts.lines || 40 }), (r) => r.text);
         break;
       }
       case 'wait': {
         const [name] = rest;
         if (!name) throw new Error('usage: metacom wait <name> [--until a,b] [--timeout S]');
-        const r = await hub.api.agents.wait({ name, until: opts.until, timeoutMs: (opts.timeout || 600) * 1000 });
+        const r = await mc.api.agents.wait({ name, until: opts.until, timeoutMs: (opts.timeout || 600) * 1000 });
         show(r, (x) => (x.timeout ? `timeout, ${x.name} is ${x.status}` : `${x.name} is ${x.status}${x.reason ? ' (' + x.reason + ')' : ''} after ${Math.round(x.elapsedMs / 1000)}s`));
         break;
       }
       case 'seen': {
         const [name] = rest;
         if (!name) throw new Error('usage: metacom seen <name>');
-        show(await hub.api.agents.seen({ name }), (m) => `${m.name}: ${m.status}`);
+        show(await mc.api.agents.seen({ name }), (m) => `${m.name}: ${m.status}`);
         break;
       }
       case 'send': {
         const [to, ...words] = rest;
         const text = words.join(' ');
-        if (!to || (!text && !opts.files)) throw new Error('usage: metacom send <name|auto> <text…> [--file PATH]');
+        if (!to || (!text && !opts.files)) throw new Error('usage: metacom send <name> <text…> [--file PATH]');
         const wait = opts.wait ? { timeoutMs: (opts.timeout || 600) * 1000 } : null;
         const media = await uploads();
-        if (to === 'auto') {
-          const r = await hub.api.agents.dispatch({ text, room: opts.room, media });
-          show(r, (x) => `→ ${x.agent} (${x.reason})${x.delivered ? '' : ', queued'}`);
-        } else {
-          const r = await hub.api.agents.send({ to, text, kind: 'command', wait, media });
-          show(r, (x) => `${x.delivered ? 'delivered' : 'queued'} → ${x.to}${x.turn ? (x.turn.stalled ? ', but nothing happened (stalled)' : `, now ${x.turn.status}`) : ''}`);
-        }
+        const r = await mc.api.agents.send({ to, text, kind: 'command', wait, media });
+        show(r, (x) => `${x.delivered ? 'delivered' : 'queued'} → ${x.to}${x.turn ? (x.turn.stalled ? ', but nothing happened (stalled)' : `, now ${x.turn.status}`) : ''}`);
         break;
       }
       case 'say': {
         const text = rest.join(' ');
         if (!text && !opts.files) throw new Error('usage: metacom say <text…> [--file PATH]');
-        await hub.api.room.say({ room: opts.room || cfg.room, text, media: await uploads() });
+        await mc.api.room.say({ room: opts.room || cfg.room, text, media: await uploads() });
         break;
       }
       case 'tail': {
         const room = opts.room || cfg.room;
-        await hub.api.room.join({ room });
+        await mc.api.room.join({ room });
         const render = (m) => (opts.json ? JSON.stringify(m) : line(m, cfg.http));
-        for (const m of await hub.api.room.history({ room, limit: 20 })) out(render(m));
-        hub.api.room.on('message', (m) => out(render(m)));
+        for (const m of await mc.api.room.history({ room, limit: 20 })) out(render(m));
+        mc.api.room.on('message', (m) => out(render(m)));
         return;
       }
       case 'token': {
         const [name] = rest;
         if (!name || !opts.role) throw new Error('usage: metacom token <name> --role owner|agent');
-        const r = await hub.api.admin.createToken({ name, role: opts.role });
+        const r = await mc.api.admin.createToken({ name, role: opts.role });
         if (opts.save && opts.role === 'agent') {
           config.save({ agentToken: r.token });
           out(`agent token for ${r.record.name} saved to ${config.file}`);
@@ -220,7 +215,7 @@ const main = async () => {
         break;
       }
       case 'tokens': {
-        for (const t of await hub.api.admin.tokens({})) out(`${t.id}  ${t.role.padEnd(5)} ${t.name.padEnd(20)} last used ${t.lastUsed || 'never'}`);
+        for (const t of await mc.api.admin.tokens({})) out(`${t.id}  ${t.role.padEnd(5)} ${t.name.padEnd(20)} last used ${t.lastUsed || 'never'}`);
         break;
       }
       default:

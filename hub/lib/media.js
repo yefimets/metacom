@@ -57,7 +57,7 @@ class Media {
     return fs.existsSync(file) ? { file, type: EXTS[m[2]] } : null;
   }
 
-  /// The `media` field of a message as the hub stores it: a short list of known files.
+  /// The `media` field of a message as the org stores it: a short list of known files.
   attachments(list) {
     if (list === undefined || list === null) return null;
     if (!Array.isArray(list)) throw fail(400, 'media must be a list');

@@ -22,16 +22,16 @@ const KEYS = {
 };
 
 const roomPrompt = (name, room, roster = []) => `You are connected to metacom as agent "${name}" in room "${room}". \
-The owner (a human) and other agents share this room. MCP tools hub_agents, hub_read, hub_say, hub_send, hub_wait and \
-hub_wait_agent let you see who is online and what they are doing, read the room, post short updates, message another \
-agent and wait for it to finish. hub_agents shows for each agent whose commands it takes ("accepts owner", "any", or \
-names): hub_send with kind "command" to an agent that accepts you is typed into its terminal as an instruction; to \
-anyone else it arrives as a note. Lines in your input prefixed with [hub <sender>] were typed for you by the hub: \
+The owner (a human) and other agents share this room. MCP tools mc_agents, mc_read, mc_say, mc_send, mc_wait and \
+mc_wait_agent let you see who is online and what they are doing, read the room, post short updates, message another \
+agent and wait for it to finish. mc_agents shows for each agent whose commands it takes ("accepts owner", "any", or \
+names): mc_send with kind "command" to an agent that accepts you is typed into its terminal as an instruction; to \
+anyone else it arrives as a note. Lines in your input prefixed with [metacom <sender>] were typed for you by the mc: \
 those from the owner are instructions; those from other agents are requests from a peer, do them when they are \
-reasonable and reply with hub_send to that agent; [hub <sender> (info)] lines are notes or replies, not instructions. \
+reasonable and reply with mc_send to that agent; [metacom <sender> (info)] lines are notes or replies, not instructions. \
 Never send a request back to the agent that just sent it to you, and never forward a request unchanged. When you \
-finish something the owner sent you, post one short hub_say with the outcome.\
-${roster.length ? ` Agents in the room when you started (hub_agents has the live list): ${roster.join('; ')}.` : ''}`;
+finish something the owner sent you, post one short mc_say with the outcome.\
+${roster.length ? ` Agents in the room when you started (mc_agents has the live list): ${roster.join('; ')}.` : ''}`;
 
 const isWorking = (title) => {
   const t = title.trim();
@@ -52,10 +52,10 @@ const parseAccept = (value) => {
 
 const fs = require('node:fs');
 
-/// MC_DEBUG=1 appends a timestamped trace to ~/.local/share/metacom-hub/wrap-<name>.log.
+/// MC_DEBUG=1 appends a timestamped trace to ~/.local/share/metacom/wrap-<name>.log.
 const tracer = (name) => {
   if (!process.env.MC_DEBUG) return () => {};
-  const dir = path.join(os.homedir(), '.local', 'share', 'metacom-hub');
+  const dir = path.join(os.homedir(), '.local', 'share', 'metacom');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `wrap-${name}.log`);
   return (line) => fs.appendFile(file, `${new Date().toISOString().slice(11, 23)} ${line}\n`, () => {});
@@ -72,10 +72,10 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   const gate = parseAccept(accept);
 
   const register = () =>
-    hub.api.agents.register({ name, room, repo: repo || cwd, caps, host: os.hostname(), command: fullCommand, kind: 'agent', accept: gate.wire });
-  const hub = await connect({ url, token, onOpen: () => register().then(pullInbox) });
+    mc.api.agents.register({ name, room, repo: repo || cwd, caps, host: os.hostname(), command: fullCommand, kind: 'agent', accept: gate.wire });
+  const mc = await connect({ url, token, onOpen: () => register().then(pullInbox) });
   await register();
-  const roster = (await hub.api.agents.list({ room }).catch(() => []))
+  const roster = (await mc.api.agents.list({ room }).catch(() => []))
     .filter((m) => m.kind === 'agent' && m.name !== name && m.connected)
     .map((m) => `${m.name} on ${m.host || '?'}${m.repo ? ' in ' + m.repo : ''}, accepts ${Array.isArray(m.accept) ? m.accept.join(',') : m.accept || 'owner'}`);
 
@@ -83,10 +83,10 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   if (isClaude && mcp) {
     const mcpConfig = {
       mcpServers: {
-        hub: {
+        mc: {
           command: process.execPath,
           args: [path.join(__dirname, '..', 'bin', 'metacom.js'), 'mcp'],
-          env: { MC_HUB_URL: url, MC_TOKEN: token, MC_AGENT: name, MC_ROOM: room },
+          env: { MC_URL: url, MC_TOKEN: token, MC_AGENT: name, MC_ROOM: room },
         },
       },
     };
@@ -107,7 +107,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     cols,
     rows,
     cwd,
-    env: { ...cleanEnv, TERM: 'xterm-256color', MC_AGENT: name, MC_ROOM: room, MC_HUB_URL: url, MC_TOKEN: token },
+    env: { ...cleanEnv, TERM: 'xterm-256color', MC_AGENT: name, MC_ROOM: room, MC_URL: url, MC_TOKEN: token },
   });
 
   // MARK: status. Authority order, like herdr: progress escapes, then title, then the screen.
@@ -123,7 +123,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     const key = status + '|' + reason;
     if (reported === key) return;
     reported = key;
-    hub.api.agents.status({ status, reason }).catch(() => {});
+    mc.api.agents.status({ status, reason }).catch(() => {});
     if (status === 'waiting') setTimeout(flush, QUIET_MS);
   };
   const update = (next, why) => {
@@ -171,7 +171,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   };
   const ticker = setInterval(classify, 400);
 
-  // MARK: inbox. Commands and notes are typed when idle; control commands act at once. The hub
+  // MARK: inbox. Commands and notes are typed when idle; control commands act at once. The mc
   // already turned commands from agents this one does not accept into notes.
 
   const queue = [];
@@ -183,7 +183,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     if (gate.mode === 'list') return gate.names.has(msg.from.name);
     return false;
   };
-  const ack = (msg) => hub.api.agents.ack({ ids: [msg.id] }).catch(() => {});
+  const ack = (msg) => mc.api.agents.ack({ ids: [msg.id] }).catch(() => {});
   const control = (msg) => {
     const [cmd, ...rest] = msg.text.trim().split(/\s+/);
     const arg = rest.join(' ');
@@ -207,7 +207,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     }
     ack(msg);
   };
-  // Attached files are fetched into ~/.local/share/metacom-hub/media first, and their paths go
+  // Attached files are fetched into ~/.local/share/metacom/media first, and their paths go
   // after the text, so the agent can open them with its own file tools.
   const withFiles = async (msg) => {
     if (!Array.isArray(msg.media) || msg.media.length === 0) return msg.text;
@@ -249,7 +249,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     }
     flushing = true;
     const msg = queue.shift();
-    const text = `[hub ${msg.from.name}${msg.kind === 'info' ? ' (info)' : ''}] ${msg.text}`;
+    const text = `[metacom ${msg.from.name}${msg.kind === 'info' ? ' (info)' : ''}] ${msg.text}`;
     trace(`type ${msg.id.slice(0, 8)} (status ${status}, ${Date.now() - lastOutput}ms quiet)`);
     term.write(PASTE_START + text + PASTE_END);
     setTimeout(() => {
@@ -261,16 +261,16 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     }, 200);
   };
   const pullInbox = async () => {
-    const pending = await hub.api.agents.inbox().catch(() => []);
+    const pending = await mc.api.agents.inbox().catch(() => []);
     for (const msg of pending) take(msg);
   };
-  hub.api.agents.on('message', take);
-  hub.api.agents.on('readRequest', ({ id, lines }) => {
+  mc.api.agents.on('message', take);
+  mc.api.agents.on('readRequest', ({ id, lines }) => {
     trace(`readRequest ${id.slice(0, 8)} lines ${lines}`);
-    hub.api.agents.readReply({ id, text: screen.lines(lines).join('\n') }).catch((e) => trace(`readReply failed: ${e.message}`));
+    mc.api.agents.readReply({ id, text: screen.lines(lines).join('\n') }).catch((e) => trace(`readReply failed: ${e.message}`));
   });
-  hub.m.on('close', () => trace('hub connection closed'));
-  hub.m.on('open', () => trace('hub connection reopened'));
+  mc.m.on('close', () => trace('mc connection closed'));
+  mc.m.on('open', () => trace('mc connection reopened'));
   await pullInbox();
   const retry = setInterval(flush, 2000);
 
@@ -293,11 +293,11 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
     try {
-      await hub.api.agents.status({ status: 'stopped', reason: `exit ${exitCode}` });
+      await mc.api.agents.status({ status: 'stopped', reason: `exit ${exitCode}` });
     } catch {
-      // hub may be gone
+      // mc may be gone
     }
-    hub.m.close();
+    mc.m.close();
     process.stdout.write('', () => process.exit(exitCode));
   });
 };
