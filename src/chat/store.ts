@@ -64,7 +64,13 @@ export type State = {
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
-type Connection = { m: { close: () => void; on: (e: string, fn: () => void) => void }; api: Api; me: { name: string; role: string } };
+type Rooms = {
+  open: (room: string, text: string) => Promise<string>;
+  close: (room: string, text: string) => Promise<string>;
+  share: (room: string, opts?: { also?: string[]; create?: boolean }) => Promise<{ room: string; shared: number; devices: number }>;
+  key: (room: string) => Promise<{ encrypted: boolean; key: string | null }>;
+};
+type Connection = { m: { close: () => void; on: (e: string, fn: () => void) => void }; api: Api; me: { name: string; role: string }; rooms: Rooms };
 
 export type Config = { url: string; http: string; token: string | null; agentToken?: string | null; room: string };
 
@@ -159,7 +165,13 @@ export class Store {
       }
       throw error;
     }
-    mc.api.room.on("message", (m: Message) => this.onMessage(m));
+    mc.api.room.on("message", (m: Message) => this.opened(m).then((o) => this.onMessage(o)));
+    // an owner device shares the room key with devices that joined since; keys/changed re-checks
+    const share = () => {
+      if (mc.me.role === "owner") mc.rooms.share(room).catch(() => {});
+    };
+    mc.api.keys.on("changed", share);
+    mc.api.agents.on("changed", share);
     mc.api.agents.on("changed", ({ members }: { members: Member[] }) => this.onMembers(members));
     mc.api.agents.on("message", (m: Message) => {
       if (m.from && m.from.name !== name) this.onBell();
@@ -169,8 +181,23 @@ export class Store {
     this.push({ type: "banner" });
     const history: Message[] = await mc.api.room.history({ room, limit: 30 });
     this.onMembers(await mc.api.agents.list({}));
-    for (const m of history) this.push({ type: "message", msg: m, grouped: this.group(m) });
+    for (const m of history) this.push({ type: "message", msg: await this.opened(m), grouped: this.group(m) });
     if (history.length) this.push({ type: "rule", text: "now" });
+    share();
+    const { encrypted, key } = await mc.rooms.key(room);
+    if (encrypted) this.note(key ? "room is encrypted; this device holds the key" : "room is encrypted and this device has no key yet: an owner device shares it when it comes online", key ? "ok" : "warn");
+  }
+
+  /// A message with its text in the clear, when this device holds the room key.
+  private async opened(m: Message): Promise<Message> {
+    if (!m.text) return m;
+    return { ...m, text: await this.mc!.rooms.open(m.room || this.state.room, m.text) };
+  }
+
+  /// What goes on the wire for a member's room.
+  private async sealed(text: string, to?: string): Promise<string> {
+    const room = (to && this.state.members.get(to)?.room) || this.state.room;
+    return this.mc!.rooms.close(room, text);
   }
 
   private async join(again: boolean): Promise<void> {
@@ -303,7 +330,7 @@ export class Store {
       if (t.startsWith("/")) await this.command(t);
       else if (t.startsWith("@")) await this.directed(t);
       else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel", "warn");
-      else await this.mc!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t) });
+      else await this.mc!.api.room.say({ room: this.state.room, text: await this.sealed(t), media: await this.uploadAll(t) });
       this.prune();
       return true;
     } catch (error) {
@@ -328,13 +355,13 @@ export class Store {
     const body = m[2]!.trim();
     const member = this.state.members.get(to);
     if (!member) {
-      await this.mc!.api.room.say({ room: this.state.room, text: t });
+      await this.mc!.api.room.say({ room: this.state.room, text: await this.sealed(t) });
       this.note(`posted to the room as text (nobody called ${to} is here)`);
       return;
     }
     if (!body) return this.note(`say something after @${to}`, "warn");
     const kind = member.kind === "agent" ? "command" : "info";
-    const r = await this.mc!.api.agents.send({ to, text: body, kind, media: await this.uploadAll(body) });
+    const r = await this.mc!.api.agents.send({ to, text: await this.sealed(body, to), kind, media: await this.uploadAll(body) });
     if (!r.delivered) this.note(`${to} is offline, queued until it is back`);
   }
 
@@ -357,7 +384,7 @@ export class Store {
         const [name, n] = rest;
         if (!name) return this.note("usage: /read <name> [lines]", "warn");
         const r = await api.agents.read({ name, lines: Number(n) || 30 });
-        this.push({ type: "screen", name, text: r.text });
+        this.push({ type: "screen", name, text: await this.mc!.rooms.open(this.state.members.get(name)?.room || this.state.room, r.text) });
         const m = this.state.members.get(name);
         if (m && m.attention && this.state.me.role === "owner") await api.agents.seen({ name });
         break;
@@ -390,7 +417,7 @@ export class Store {
       }
       case "say":
         if (!arg) return this.note("usage: /say <text>", "warn");
-        await api.room.say({ room: this.state.room, text: arg, media: await this.uploadAll(arg) });
+        await api.room.say({ room: this.state.room, text: await this.sealed(arg), media: await this.uploadAll(arg) });
         break;
       case "attach":
         // handled in the app: the token has to land in the input

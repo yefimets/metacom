@@ -30,7 +30,11 @@ const usage = `metacom – join agents and yourself to metacom (mc is a short al
       !cancel  !stop  !keys enter|esc|up|y  !type text    control commands: act at once, never typed as text
   metacom say <text…> [--room R] [--file P]  post to the room
   metacom tail [--room R]                    follow the room
-  metacom rooms                              list rooms
+  metacom rooms                              list rooms ("locked" = encrypted)
+  metacom rooms encrypt <room> [server]      owner: make a room key and share it with every known device
+  metacom rooms share <room> [server|name]   owner: share the key with devices that joined since
+  metacom rooms devices <room>               owner: known devices and who holds the key
+  metacom rooms revoke <room> <publicKey>    owner: take a device's copy away
   metacom token <name> --role owner|agent    create a token (owner only), prints it once
       --save             store it as this machine's agent token in the config
   metacom tokens                             list tokens (owner only)
@@ -140,6 +144,8 @@ const main = async () => {
     process.stdout.write('', () => process.exit(0));
   };
   const out = (s) => process.stdout.write(s + '\n');
+  // the room a member lives in decides which key its messages use
+  const roomOf = async (name) => (await mc.api.agents.list({})).find((m) => m.name === name)?.room || opts.room || cfg.room;
   const show = (value, render) => out(opts.json ? JSON.stringify(value, null, 2) : render(value));
   const uploads = async () => {
     if (!opts.files || opts.files.length === 0) return undefined;
@@ -155,14 +161,35 @@ const main = async () => {
         break;
       }
       case 'rooms': {
+        const [verb, room, ...also] = rest;
+        if (verb === 'encrypt' || verb === 'share') {
+          if (!room) throw new Error(`usage: metacom rooms ${verb} <room> [server|device-name…]`);
+          const r = await mc.rooms.share(room, { also, create: verb === 'encrypt' });
+          show(r, (x) => `${x.room}: key shared with ${x.shared} more device${x.shared === 1 ? '' : 's'} (${x.devices} known)`);
+          break;
+        }
+        if (verb === 'devices') {
+          if (!room) throw new Error('usage: metacom rooms devices <room>');
+          show(await mc.api.keys.list({ room }), (list) =>
+            list.map((d) => `${d.sealed ? 'key' : '   '}  ${String(d.role || '').padEnd(6)} ${String(d.name || '?').padEnd(20)} ${d.publicKey.slice(0, 16)}…${d.lastSeen ? '  seen ' + d.lastSeen.slice(0, 16) : ''}`).join('\n'));
+          break;
+        }
+        if (verb === 'revoke') {
+          const [publicKey] = also;
+          if (!room || !publicKey) throw new Error('usage: metacom rooms revoke <room> <publicKey>');
+          show(await mc.api.keys.revoke({ room, publicKey }), (x) => (x.removed ? 'removed; make a new key with rooms encrypt to lock that device out for good' : 'no such key'));
+          break;
+        }
         show(await mc.api.room.list({}), (rooms) =>
-          rooms.map((r) => `${r.room.padEnd(16)} ${r.online}/${r.agents} online, ${r.working} working, ${r.blocked} blocked, ${r.attention} done`).join('\n'));
+          rooms.map((r) => `${(r.encrypted ? 'locked ' : '').padEnd(7)}${r.room.padEnd(16)} ${r.online}/${r.agents} online, ${r.working} working, ${r.blocked} blocked, ${r.attention} done`).join('\n'));
         break;
       }
       case 'read': {
         const [name] = rest;
         if (!name) throw new Error('usage: metacom read <name> [--lines N]');
-        show(await mc.api.agents.read({ name, lines: opts.lines || 40 }), (r) => r.text);
+        const r = await mc.api.agents.read({ name, lines: opts.lines || 40 });
+        r.text = await mc.rooms.open(await roomOf(name), r.text);
+        show(r, (x) => x.text);
         break;
       }
       case 'wait': {
@@ -184,22 +211,26 @@ const main = async () => {
         if (!to || (!text && !opts.files)) throw new Error('usage: metacom send <name> <text…> [--file PATH]');
         const wait = opts.wait ? { timeoutMs: (opts.timeout || 600) * 1000 } : null;
         const media = await uploads();
-        const r = await mc.api.agents.send({ to, text, kind: 'command', wait, media });
+        const r = await mc.api.agents.send({ to, text: await mc.rooms.close(await roomOf(to), text), kind: 'command', wait, media });
         show(r, (x) => `${x.delivered ? 'delivered' : 'queued'} → ${x.to}${x.turn ? (x.turn.stalled ? ', but nothing happened (stalled)' : `, now ${x.turn.status}`) : ''}`);
         break;
       }
       case 'say': {
         const text = rest.join(' ');
         if (!text && !opts.files) throw new Error('usage: metacom say <text…> [--file PATH]');
-        await mc.api.room.say({ room: opts.room || cfg.room, text, media: await uploads() });
+        const room = opts.room || cfg.room;
+        await mc.api.room.say({ room, text: await mc.rooms.close(room, text), media: await uploads() });
         break;
       }
       case 'tail': {
         const room = opts.room || cfg.room;
         await mc.api.room.join({ room });
-        const render = (m) => (opts.json ? JSON.stringify(m) : line(m, cfg.http));
-        for (const m of await mc.api.room.history({ room, limit: 20 })) out(render(m));
-        mc.api.room.on('message', (m) => out(render(m)));
+        const render = async (m) => {
+          const opened = { ...m, text: await mc.rooms.open(m.room, m.text) };
+          out(opts.json ? JSON.stringify(opened) : line(opened, cfg.http));
+        };
+        for (const m of await mc.api.room.history({ room, limit: 20 })) await render(m);
+        mc.api.room.on('message', (m) => render(m).catch(() => {}));
         return;
       }
       case 'token': {
