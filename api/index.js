@@ -2,9 +2,9 @@
 
 const { fail } = require('../lib/errors.js');
 
-/// Every method is `public` for metacom and authenticates itself through hub.identify():
+/// Every method is `public` for metacom and authenticates itself through org.identify():
 /// websocket callers sign in once, HTTP callers pass `token` in every call.
-const buildApi = ({ hub, auth, console, assistant }) => {
+const buildApi = ({ org, auth, console, assistant }) => {
   const method = (handler) => ({ access: 'public', handler });
   const units = {
     system: {
@@ -28,53 +28,52 @@ const buildApi = ({ hub, auth, console, assistant }) => {
           setTimeout(() => client.close(), 200);
           throw fail(401, 'Bad token');
         }
-        if (hub.conns.has(client)) return hub.from(hub.conns.get(client));
-        const conn = hub.bind(client, record, ip);
-        return hub.from(conn);
+        if (org.conns.has(client)) return org.from(org.conns.get(client));
+        const conn = org.bind(client, record, ip);
+        return org.from(conn);
       }),
-      whoami: method(async (args, context) => hub.from(hub.identify(context, args))),
+      whoami: method(async (args, context) => org.from(org.identify(context, args))),
     },
     agents: {
-      register: method(async (args = {}, context) => hub.register(hub.identify(context, args), args)),
-      status: method(async ({ status, reason, ...rest } = {}, context) => hub.setStatus(hub.identify(context, rest), status, reason)),
-      seen: method(async ({ name, ...rest } = {}, context) => hub.seen(hub.identify(context, rest), name)),
-      wait: method(async ({ name, until, timeoutMs, ...rest } = {}, context) => hub.wait(hub.identify(context, rest), name, until, timeoutMs)),
-      read: method(async ({ name, lines, ...rest } = {}, context) => hub.read(hub.identify(context, rest), name, lines)),
-      readReply: method(async ({ id, text, ...rest } = {}, context) => hub.readReply(hub.identify(context, rest), id, text)),
-      list: method(async ({ room, ...rest } = {}, context) => hub.list(hub.identify(context, rest), room)),
-      send: method(async ({ to, text, kind, wait, media, ...rest } = {}, context) => hub.send(hub.identify(context, rest), to, text, kind, wait, media)),
-      dispatch: method(async ({ text, room, media, ...rest } = {}, context) => hub.dispatch(hub.identify(context, rest), text, room, media)),
-      inbox: method(async ({ since, ...rest } = {}, context) => hub.inboxFor(hub.identify(context, rest), since)),
-      ack: method(async ({ ids, ...rest } = {}, context) => hub.ack(hub.identify(context, rest), ids)),
+      register: method(async (args = {}, context) => org.register(org.identify(context, args), args)),
+      status: method(async ({ status, reason, ...rest } = {}, context) => org.setStatus(org.identify(context, rest), status, reason)),
+      seen: method(async ({ name, ...rest } = {}, context) => org.seen(org.identify(context, rest), name)),
+      wait: method(async ({ name, until, timeoutMs, ...rest } = {}, context) => org.wait(org.identify(context, rest), name, until, timeoutMs)),
+      read: method(async ({ name, lines, ...rest } = {}, context) => org.read(org.identify(context, rest), name, lines)),
+      readReply: method(async ({ id, text, ...rest } = {}, context) => org.readReply(org.identify(context, rest), id, text)),
+      list: method(async ({ room, ...rest } = {}, context) => org.list(org.identify(context, rest), room)),
+      send: method(async ({ to, text, kind, wait, media, ...rest } = {}, context) => org.send(org.identify(context, rest), to, text, kind, wait, media)),
+      inbox: method(async ({ since, ...rest } = {}, context) => org.inboxFor(org.identify(context, rest), since)),
+      ack: method(async ({ ids, ...rest } = {}, context) => org.ack(org.identify(context, rest), ids)),
     },
     room: {
-      join: method(async ({ room, ...rest } = {}, context) => hub.join(hub.identify(context, rest), room)),
-      say: method(async ({ room, text, media, ...rest } = {}, context) => hub.say(hub.identify(context, rest), room, text, media)),
-      history: method(async ({ room, limit, since, ...rest } = {}, context) => hub.history(hub.identify(context, rest), room, limit, since)),
+      join: method(async ({ room, ...rest } = {}, context) => org.join(org.identify(context, rest), room)),
+      say: method(async ({ room, text, media, ...rest } = {}, context) => org.say(org.identify(context, rest), room, text, media)),
+      history: method(async ({ room, limit, since, ...rest } = {}, context) => org.history(org.identify(context, rest), room, limit, since)),
       list: method(async (args = {}, context) => {
-        hub.identify(context, args);
-        return hub.rooms();
+        org.identify(context, args);
+        return org.rooms();
       }),
     },
     assistant: {
       ask: method(async ({ token, ...args } = {}, context) => {
-        const conn = hub.identify(context, { token });
-        hub.owner(conn);
+        const conn = org.identify(context, { token });
+        org.owner(conn);
         return assistant.ask(conn, args);
       }),
       resume: method(async ({ token, ...args } = {}, context) => {
-        const conn = hub.identify(context, { token });
-        hub.owner(conn);
+        const conn = org.identify(context, { token });
+        org.owner(conn);
         return assistant.resume(conn, args);
       }),
       tools: method(async (args = {}, context) => {
-        hub.identify(context, args);
+        org.identify(context, args);
         return require('../lib/tools.js').TOOLS.map(({ name, where, description }) => ({ name, where, description }));
       }),
     },
     admin: {
       createToken: method(async ({ name, role, ...rest } = {}, context) => {
-        hub.owner(hub.identify(context, rest));
+        org.owner(org.identify(context, rest));
         try {
           const created = auth.create({ name, role });
           console.log(`admin: token "${name}" (${role}) created`);
@@ -84,11 +83,11 @@ const buildApi = ({ hub, auth, console, assistant }) => {
         }
       }),
       tokens: method(async (args = {}, context) => {
-        hub.owner(hub.identify(context, args));
+        org.owner(org.identify(context, args));
         return auth.list();
       }),
       revokeToken: method(async ({ id, ...rest } = {}, context) => {
-        hub.owner(hub.identify(context, rest));
+        org.owner(org.identify(context, rest));
         return { revoked: auth.revoke(id) };
       }),
     },

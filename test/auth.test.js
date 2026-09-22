@@ -10,7 +10,7 @@ const { Auth } = require('../lib/auth.js');
 const quiet = { warn() {}, log() {} };
 
 test('auth: bootstrap token, verify, revoke, hashes only on disk', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-auth-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-auth-'));
   const auth = new Auth(dir, quiet);
   const boot = fs.readFileSync(path.join(dir, 'bootstrap-token.txt'), 'utf8').trim();
   assert.strictEqual(auth.verify(boot).role, 'owner');
@@ -25,7 +25,7 @@ test('auth: bootstrap token, verify, revoke, hashes only on disk', () => {
 });
 
 test('auth: five bad tokens block the address', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-auth-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-auth-'));
   const auth = new Auth(dir, quiet);
   for (let i = 0; i < 5; i++) auth.recordFailure('10.0.0.1');
   assert.strictEqual(auth.blocked('10.0.0.1'), true);

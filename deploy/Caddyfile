@@ -1,4 +1,4 @@
-{$HUB_DOMAIN} {
+{$MC_DOMAIN} {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -6,5 +6,5 @@
 		X-Frame-Options DENY
 		Referrer-Policy no-referrer
 	}
-	reverse_proxy hub:8900
+	reverse_proxy org:8900
 }

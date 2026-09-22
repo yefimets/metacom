@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const { Hub } = require('../lib/hub.js');
+const { Org } = require('../lib/org.js');
 const { Auth } = require('../lib/auth.js');
 const { Media, serveMedia } = require('../lib/media.js');
 
@@ -19,32 +19,32 @@ const fakeClient = () => {
 };
 
 const setup = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-'));
   const auth = new Auth(dir, quiet);
-  const hub = new Hub({ dataDir: dir, auth, console: quiet });
+  const org = new Org({ dataDir: dir, auth, console: quiet });
   const ownerToken = fs.readFileSync(path.join(dir, 'bootstrap-token.txt'), 'utf8').trim();
-  const ownerConn = hub.bind(fakeClient(), auth.verify(ownerToken), '127.0.0.1');
+  const ownerConn = org.bind(fakeClient(), auth.verify(ownerToken), '127.0.0.1');
   const agentClient = fakeClient();
-  const agentConn = hub.bind(agentClient, auth.verify(auth.create({ name: 'a', role: 'agent' }).token), '127.0.0.1');
-  hub.register(agentConn, { name: 'Alex', room: 'dev' });
-  return { dir, auth, hub, ownerToken, ownerConn, agentConn, agentClient };
+  const agentConn = org.bind(agentClient, auth.verify(auth.create({ name: 'a', role: 'agent' }).token), '127.0.0.1');
+  org.register(agentConn, { name: 'Alex', room: 'dev' });
+  return { dir, auth, org, ownerToken, ownerConn, agentConn, agentClient };
 };
 
 test('media: stored files ride on messages, unknown ones are refused', async () => {
-  const { hub, ownerConn, agentConn, agentClient } = setup();
-  const saved = hub.media.save(PNG, 'image/png', 'shot.png');
+  const { org, ownerConn, agentConn, agentClient } = setup();
+  const saved = org.media.save(PNG, 'image/png', 'shot.png');
   assert.match(saved.url, /^\/media\/[0-9a-f]{32}\.png$/);
-  assert.ok(hub.media.file(saved.url));
-  const said = hub.say(ownerConn, 'dev', '', [saved]);
+  assert.ok(org.media.file(saved.url));
+  const said = org.say(ownerConn, 'dev', '', [saved]);
   assert.strictEqual(said.text, '');
   assert.deepStrictEqual(said.media, [{ url: saved.url, type: 'image/png', size: PNG.length, name: 'shot.png' }]);
-  hub.setStatus(agentConn, 'waiting', 'idle');
-  await hub.send(ownerConn, 'Alex', 'look', 'command', null, [{ url: saved.url, name: 'a b.png' }]);
+  org.setStatus(agentConn, 'waiting', 'idle');
+  await org.send(ownerConn, 'Alex', 'look', 'command', null, [{ url: saved.url, name: 'a b.png' }]);
   const delivered = agentClient.events.find(([n]) => n === 'agents/message')[1];
   assert.strictEqual(delivered.media[0].name, 'a b.png');
-  assert.throws(() => hub.say(ownerConn, 'dev', 'x', [{ url: '/media/' + '0'.repeat(32) + '.png' }]), (e) => e.code === 400);
-  assert.throws(() => hub.say(ownerConn, 'dev', '', []), (e) => e.code === 400);
-  assert.throws(() => hub.media.save(PNG, 'application/zip', 'x.zip'), (e) => e.code === 415);
+  assert.throws(() => org.say(ownerConn, 'dev', 'x', [{ url: '/media/' + '0'.repeat(32) + '.png' }]), (e) => e.code === 400);
+  assert.throws(() => org.say(ownerConn, 'dev', '', []), (e) => e.code === 400);
+  assert.throws(() => org.media.save(PNG, 'application/zip', 'x.zip'), (e) => e.code === 415);
 });
 
 test('media: POST /media needs a token and answers with the url, GET serves the bytes', async () => {

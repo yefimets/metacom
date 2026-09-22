@@ -2,7 +2,7 @@
 
 // A metacom client small enough to live in one file: call packets get callbacks by id,
 // event packets go to listeners by "unit/name". Reconnects and signs in again on drop.
-class Hub {
+class Metacom {
   constructor(url, token) {
     this.url = url;
     this.token = token;
@@ -94,7 +94,7 @@ const mark = (cls) => {
   return svg;
 };
 
-const state = { hub: null, room: null, members: [], me: null, screenAgent: null, pending: 0 };
+const state = { mc: null, room: null, members: [], me: null, screenAgent: null, pending: 0 };
 const wsUrl = () => (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/';
 
 // The spinning mark in the corner while any call is in flight, and on the login screen
@@ -161,7 +161,7 @@ const roomAgents = () =>
   state.members.filter((m) => m.kind === 'agent' && (!state.room || m.room === state.room)).sort((a, b) => rank(a) - rank(b));
 
 // MARK: addressing. Like the terminal chat: a message that starts with "@Name" goes to that
-// agent, "@room" is posted to the room, anything else (or "@auto") lets the hub pick.
+// agent, anything else is posted to the room.
 const MENTION = /^@(\S+)\s*/;
 const MENTION_OR_AT = /^@\S*\s*/; // also a bare "@" the popup is completing
 const leadingMention = (text) => {
@@ -208,7 +208,7 @@ const renderAgents = () => {
     }
     card.onclick = () => {
       setMention(leadingMention($('text').value) === m.name ? '' : m.name);
-      if (m.attention) state.hub.call('agents/seen', { name: m.name }).catch(() => {});
+      if (m.attention) state.mc.call('agents/seen', { name: m.name }).catch(() => {});
     };
     box.append(card);
   }
@@ -216,10 +216,7 @@ const renderAgents = () => {
 
 // The member list pops up over the input while the caret sits in a leading "@..." token.
 const mentionChoices = () => {
-  const fixed = [
-    { name: 'auto', meta: 'hub picks an agent' },
-    { name: 'room', meta: 'everyone' },
-  ];
+  const fixed = [{ name: 'room', meta: 'everyone' }];
   const agents = roomAgents().map((m) => ({ name: m.name, meta: m.connected ? m.status : 'stopped' }));
   return [...fixed, ...agents];
 };
@@ -259,10 +256,10 @@ const openScreen = async (name) => {
   $('screenTitle').textContent = name;
   $('screen').classList.remove('hidden');
   try {
-    const r = await withBusy(() => state.hub.call('agents/read', { name, lines: 80 }));
+    const r = await withBusy(() => state.mc.call('agents/read', { name, lines: 80 }));
     $('screenText').textContent = r.text || '(empty)';
     $('screenText').scrollTop = $('screenText').scrollHeight;
-    state.hub.call('agents/seen', { name }).catch(() => {});
+    state.mc.call('agents/seen', { name }).catch(() => {});
   } catch (error) {
     $('screenText').textContent = error.message;
   }
@@ -271,7 +268,7 @@ $('screenClose').onclick = () => $('screen').classList.add('hidden');
 $('screenRefresh').onclick = () => openScreen(state.screenAgent);
 const sendCommand = async (text) => {
   try {
-    await withBusy(() => state.hub.call('agents/send', { to: state.screenAgent, text, kind: 'command' }));
+    await withBusy(() => state.mc.call('agents/send', { to: state.screenAgent, text, kind: 'command' }));
     setTimeout(() => openScreen(state.screenAgent), 700);
   } catch (error) {
     toast(error.message);
@@ -434,7 +431,7 @@ const clearFiles = () => {
 const upload = async (f) => {
   const res = await fetch('/media', {
     method: 'POST',
-    headers: { 'Content-Type': f.type, Authorization: `Bearer ${state.hub.token}`, 'X-Name': encodeURIComponent(f.file.name || 'pasted.png') },
+    headers: { 'Content-Type': f.type, Authorization: `Bearer ${state.mc.token}`, 'X-Name': encodeURIComponent(f.file.name || 'pasted.png') },
     body: f.file,
   });
   if (!res.ok) {
@@ -481,45 +478,45 @@ document.addEventListener('drop', (e) => {
 
 const loadRoom = async (room) => {
   state.room = room;
-  store.set('hub.room', room);
+  store.set('mc.room', room);
   $('stream').replaceChildren(el('div', 'empty', 'no messages'));
   scroll.pinned = true;
   scroll.seen();
-  const history = await withBusy(() => state.hub.call('room/history', { room, limit: 100 }));
+  const history = await withBusy(() => state.mc.call('room/history', { room, limit: 100 }));
   for (const m of history) renderMessage(m);
   scroll.settle();
   renderAgents();
 };
 
 const start = async (token) => {
-  const hub = new Hub(wsUrl(), token);
-  state.hub = hub;
-  hub.onState = (on) => {
+  const mc = new Metacom(wsUrl(), token);
+  state.mc = mc;
+  mc.onState = (on) => {
     // the label for the room picker while connected; "offline" is the one state worth a word
     $('state').textContent = on ? 'room' : 'offline';
     $('state').classList.toggle('on', on);
     $('headLogo').classList.toggle('spin', !on);
   };
-  hub.on('agents/changed', ({ members }) => {
+  mc.on('agents/changed', ({ members }) => {
     state.members = members;
     renderAgents();
   });
-  hub.on('room/message', (m) => {
+  mc.on('room/message', (m) => {
     if (m.room === state.room) renderMessage(m);
   });
   $('loginLogo').classList.add('spin');
   try {
-    state.me = await hub.connect();
+    state.me = await mc.connect();
   } finally {
     $('loginLogo').classList.remove('spin');
   }
-  await hub.call('agents/register', { name: state.me.name, kind: 'human', room: '*' }).catch(() => {});
-  await hub.call('room/join', { room: '*' });
-  state.members = await hub.call('agents/list', {});
-  const rooms = (await hub.call('room/list', {})).map((r) => r.room);
+  await mc.call('agents/register', { name: state.me.name, kind: 'human', room: '*' }).catch(() => {});
+  await mc.call('room/join', { room: '*' });
+  state.members = await mc.call('agents/list', {});
+  const rooms = (await mc.call('room/list', {})).map((r) => r.room);
   const select = $('room');
   select.replaceChildren(...rooms.map((r) => new Option(r, r)));
-  const remembered = store.get('hub.room');
+  const remembered = store.get('mc.room');
   const first = rooms.includes(remembered) ? remembered : rooms.find((r) => state.members.some((m) => m.room === r && m.kind === 'agent')) || rooms[0];
   select.value = first;
   select.onchange = () => loadRoom(select.value);
@@ -568,7 +565,7 @@ $('composer').onsubmit = async (event) => {
   const raw = $('text').value.trim();
   const target = leadingMention(raw);
   const agent = state.members.find((m) => m.kind === 'agent' && m.name === target);
-  // the mention comes off for a known agent or the room; "auto" keeps it, the router reads names
+  // the mention comes off for a known agent or the room; an unknown one stays as text
   const text = agent || target === 'room' ? raw.replace(MENTION, '').trim() : raw;
   if (!text && files.length === 0) return;
   const button = $('send');
@@ -576,9 +573,8 @@ $('composer').onsubmit = async (event) => {
   try {
     await withBusy(async () => {
       const media = await uploadAll();
-      if (target === 'room') await state.hub.call('room/say', { room: state.room, text, media });
-      else if (agent) await state.hub.call('agents/send', { to: agent.name, text, kind: 'command', media });
-      else await state.hub.call('agents/dispatch', { text, room: state.room, media });
+      if (agent) await state.mc.call('agents/send', { to: agent.name, text, kind: 'command', media });
+      else await state.mc.call('room/say', { room: state.room, text, media });
     });
     $('text').value = agent ? `@${agent.name} ` : '';
     clearFiles();
@@ -605,7 +601,7 @@ const login = async () => {
   $('loginBtn').disabled = true;
   try {
     await start(token);
-    store.set('hub.token', token);
+    store.set('mc.token', token);
   } catch (error) {
     $('loginError').textContent = error.message;
   } finally {
@@ -621,8 +617,8 @@ $('token').addEventListener('keydown', (e) => {
 let pressTimer = null;
 $('headLogo').addEventListener('pointerdown', () => {
   pressTimer = setTimeout(() => {
-    store.del('hub.token');
-    if (state.hub) state.hub.close();
+    store.del('mc.token');
+    if (state.mc) state.mc.close();
     $('token').value = '';
     $('login').classList.remove('hidden');
     toast('token forgotten');
@@ -630,5 +626,5 @@ $('headLogo').addEventListener('pointerdown', () => {
 });
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) $('headLogo').addEventListener(ev, () => clearTimeout(pressTimer));
 
-const saved = store.get('hub.token');
+const saved = store.get('mc.token');
 if (saved) start(saved).catch(() => $('login').classList.remove('hidden'));
