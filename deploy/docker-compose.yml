@@ -18,6 +18,8 @@ services:
       HUB_CORS: https://${HUB_DOMAIN}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       HUB_ROUTER_MODEL: ${HUB_ROUTER_MODEL:-google/gemini-2.5-flash}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_OWNER: ${TELEGRAM_OWNER:-}
     volumes:
       - hub-data:/data
     expose:

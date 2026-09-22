@@ -7,12 +7,13 @@ set -e
 TARGET="$1"; DOMAIN="$2"
 [ -n "$TARGET" ] && [ -n "$DOMAIN" ] || { echo "usage: $0 user@host hub.domain"; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# OPENROUTER_API_KEY and TELEGRAM_* lines of ~/.config/metacom-hub/hub.env travel to the server's .env
 KEY_LINE=""
-[ -f "$HOME/.config/metacom-hub/hub.env" ] && KEY_LINE="$(grep '^OPENROUTER_API_KEY=' "$HOME/.config/metacom-hub/hub.env" || true)"
+[ -f "$HOME/.config/metacom-hub/hub.env" ] && KEY_LINE="$(grep -E '^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_OWNER)=' "$HOME/.config/metacom-hub/hub.env" || true)"
 
 echo "→ copying sources"
-ssh "$TARGET" 'mkdir -p ~/metacomdev'
-tar -C "$ROOT" --exclude node_modules --exclude '.git' -czf - metacom hub | ssh "$TARGET" 'tar -C ~/metacomdev -xzf -'
+ssh "$TARGET" 'mkdir -p ~/metacom'
+tar -C "$ROOT" --exclude node_modules --exclude '.git' -czf - metacom hub | ssh "$TARGET" 'tar -C ~/metacom -xzf -'
 
 echo "→ installing docker and starting the hub"
 ssh "$TARGET" "DOMAIN='$DOMAIN' KEY_LINE='$KEY_LINE' sh -s" <<'REMOTE'
@@ -24,7 +25,7 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow 22/tcp >/dev/null; ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
   ufw --force enable >/dev/null
 fi
-cd ~/metacomdev/hub/deploy
+cd ~/metacom/hub/deploy
 printf 'HUB_DOMAIN=%s\n%s\nHUB_ROUTER_MODEL=google/gemini-2.5-flash\n' "$DOMAIN" "${KEY_LINE:-OPENROUTER_API_KEY=}" > .env
 chmod 600 .env
 docker compose up -d --build >/dev/null
