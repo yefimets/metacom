@@ -80,6 +80,9 @@
   header #state { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
   header #state.on { color: var(--fg); }
   header .field { height: 32px; flex: 0 1 auto; min-width: 0; }
+  header #lock { height: 32px; line-height: 30px; padding: 0 8px; font-size: 10px; }
+  header #lock.on { background: var(--fg); color: var(--bg); }
+  header #lock:disabled { opacity: 1; }
   header .field > select { padding: 0 26px 0 8px; font-size: 12px; text-transform: uppercase; text-overflow: ellipsis; }
 
   /* agent strip */
@@ -200,6 +203,7 @@
   <span class="title">metacom</span>
   <span class="spacer"></span>
   <span id="state" title="connection">offline</span>
+  <button id="lock" class="btn ghost" type="button" title="room encryption" disabled>open</button>
   <label class="field select"><select id="room" aria-label="room"></select></label>
 </header>
 
@@ -253,6 +257,7 @@
 <div id="busy" class="hidden"><svg class="logo spin"><use href="#mark"/></svg></div>
 <div id="toast" class="hidden"></div>
 
+<script src="/crypto.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

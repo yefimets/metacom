@@ -23,7 +23,7 @@ class Metacom {
       this.ws = ws;
       ws.onopen = async () => {
         try {
-          this.me = await this.call('auth/signin', { token: this.token });
+          this.me = await this.call('auth/signin', { token: this.token, publicKey: (await device()).publicKey });
           this.onState(true);
           resolve(this.me);
         } catch (error) {
@@ -95,6 +95,83 @@ const mark = (cls) => {
 };
 
 const state = { mc: null, room: null, members: [], me: null, screenAgent: null, pending: 0 };
+
+// MARK: encryption. This browser is a device with its own keypair (kept in localStorage, so it
+// stays across reloads on this phone). Room keys arrive sealed to it; an owner device also
+// seals the room key for devices that joined since, whenever the list changes.
+let devicePair = null;
+const device = async () => {
+  if (devicePair) return devicePair;
+  try {
+    const stored = JSON.parse(localStorage.getItem('mc.device') || 'null');
+    if (stored && stored.publicKey && stored.privateKey) return (devicePair = stored);
+  } catch {
+    // none yet
+  }
+  devicePair = await MC.generateKeyPair();
+  try {
+    localStorage.setItem('mc.device', JSON.stringify(devicePair));
+  } catch {
+    // private mode: this device forgets its key with the page
+  }
+  return devicePair;
+};
+const roomKeys = new Map();
+const keys = {
+  async get(room) {
+    if (roomKeys.has(room)) return roomKeys.get(room);
+    const { encrypted, sealed } = await state.mc.call('keys/get', { room });
+    let key = null;
+    if (sealed) {
+      try {
+        key = await MC.unseal(sealed, await device());
+      } catch {
+        key = null;
+      }
+    }
+    const entry = { encrypted, key };
+    roomKeys.set(room, entry);
+    return entry;
+  },
+  forget(room) {
+    roomKeys.delete(room);
+  },
+  async open(room, text) {
+    if (!MC.isSealed(text)) return text;
+    const { key } = await this.get(room);
+    const plain = key ? await MC.decryptText(text, key, room) : null;
+    return plain === null ? '[encrypted]' : plain;
+  },
+  async close(room, text) {
+    const { encrypted, key } = await this.get(room);
+    if (!encrypted) return text;
+    if (!key) throw new Error(`room ${room} is encrypted and this phone has no key for it yet`);
+    return MC.encryptText(text, key, room);
+  },
+  // owner: make the room key (create) or hand it to devices that lack it; never to the server
+  // unless asked, since a server with the key can read the room
+  async share(room, { create = false, server = false } = {}) {
+    if (!state.me || state.me.role !== 'owner') return 0;
+    const devices = await state.mc.call('keys/list', { room });
+    let { key } = await this.get(room);
+    if (!key) {
+      if (!create || devices.some((d) => d.sealed)) return 0;
+      key = MC.generateRoomKey();
+    }
+    const sealed = {};
+    const me = (await device()).publicKey;
+    for (const d of devices) {
+      if (d.sealed) continue;
+      if (d.role === 'server' && !server) continue;
+      sealed[d.publicKey] = await MC.seal(key, d.publicKey);
+    }
+    if (!devices.some((d) => d.publicKey === me && d.sealed) && !sealed[me]) sealed[me] = await MC.seal(key, me);
+    const count = Object.keys(sealed).length;
+    if (count) await state.mc.call('keys/put', { room, sealed });
+    this.forget(room);
+    return count;
+  },
+};
 const wsUrl = () => (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/';
 
 // The spinning mark in the corner while any call is in flight, and on the login screen
@@ -257,7 +334,9 @@ const openScreen = async (name) => {
   $('screen').classList.remove('hidden');
   try {
     const r = await withBusy(() => state.mc.call('agents/read', { name, lines: 80 }));
-    $('screenText').textContent = r.text || '(empty)';
+    const member = state.members.find((x) => x.name === name);
+    const text = await keys.open(member ? member.room : state.room, r.text);
+    $('screenText').textContent = text || '(empty)';
     $('screenText').scrollTop = $('screenText').scrollHeight;
     state.mc.call('agents/seen', { name }).catch(() => {});
   } catch (error) {
@@ -268,7 +347,8 @@ $('screenClose').onclick = () => $('screen').classList.add('hidden');
 $('screenRefresh').onclick = () => openScreen(state.screenAgent);
 const sendCommand = async (text) => {
   try {
-    await withBusy(() => state.mc.call('agents/send', { to: state.screenAgent, text, kind: 'command' }));
+    const member = state.members.find((x) => x.name === state.screenAgent);
+    await withBusy(async () => state.mc.call('agents/send', { to: state.screenAgent, text: await keys.close(member ? member.room : state.room, text), kind: 'command' }));
     setTimeout(() => openScreen(state.screenAgent), 700);
   } catch (error) {
     toast(error.message);
@@ -360,8 +440,9 @@ $('stream').addEventListener('scroll', () => {
 });
 $('unread').onclick = () => scroll.jump();
 
-const renderMessage = (m) => {
+const renderMessage = async (m) => {
   const stream = $('stream');
+  m = { ...m, text: await keys.open(m.room || state.room, m.text) };
   const placeholder = stream.querySelector('.empty');
   if (placeholder) placeholder.remove();
   if (m.kind === 'system') {
@@ -483,9 +564,29 @@ const loadRoom = async (room) => {
   scroll.pinned = true;
   scroll.seen();
   const history = await withBusy(() => state.mc.call('room/history', { room, limit: 100 }));
-  for (const m of history) renderMessage(m);
+  for (const m of history) await renderMessage(m);
   scroll.settle();
   renderAgents();
+  renderLock();
+  keys.share(room).catch(() => {});
+};
+
+// the lock in the header: closed for an encrypted room; the owner taps it to encrypt a room
+const renderLock = async () => {
+  const lock = $('lock');
+  const { encrypted, key } = await keys.get(state.room);
+  lock.textContent = encrypted ? (key ? 'locked' : 'no key') : 'open';
+  lock.classList.toggle('on', encrypted && Boolean(key));
+  lock.disabled = encrypted || !state.me || state.me.role !== 'owner';
+};
+$('lock').onclick = async () => {
+  if (!confirm(`Encrypt room ${state.room}? Every device that has joined gets the key; the server does not (Telegram and the assistant then cannot read it until you share the key with it: metacom rooms share ${state.room} server).`)) return;
+  try {
+    await withBusy(() => keys.share(state.room, { create: true }));
+    renderLock();
+  } catch (error) {
+    toast(error.message);
+  }
 };
 
 const start = async (token) => {
@@ -501,8 +602,17 @@ const start = async (token) => {
     state.members = members;
     renderAgents();
   });
+  let chain = Promise.resolve();
   mc.on('room/message', (m) => {
-    if (m.room === state.room) renderMessage(m);
+    if (m.room === state.room) chain = chain.then(() => renderMessage(m));
+  });
+  mc.on('keys/changed', ({ room }) => {
+    keys.forget(room);
+    if (room === state.room) renderLock();
+    keys.share(room).catch(() => {});
+  });
+  mc.on('agents/changed', () => {
+    if (state.room) keys.share(state.room).catch(() => {});
   });
   $('loginLogo').classList.add('spin');
   try {
@@ -573,8 +683,8 @@ $('composer').onsubmit = async (event) => {
   try {
     await withBusy(async () => {
       const media = await uploadAll();
-      if (agent) await state.mc.call('agents/send', { to: agent.name, text, kind: 'command', media });
-      else await state.mc.call('room/say', { room: state.room, text, media });
+      if (agent) await state.mc.call('agents/send', { to: agent.name, text: await keys.close(agent.room || state.room, text), kind: 'command', media });
+      else await state.mc.call('room/say', { room: state.room, text: await keys.close(state.room, text), media });
     });
     $('text').value = agent ? `@${agent.name} ` : '';
     clearFiles();
