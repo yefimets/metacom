@@ -12,6 +12,7 @@ const { createContext } = require('./lib/context.js');
 const { guardSockets } = require('./lib/guard.js');
 const { serveWeb } = require('./lib/web.js');
 const { serveMedia } = require('./lib/media.js');
+const { Telegram } = require('./lib/telegram.js');
 
 const env = process.env;
 const host = env.HUB_HOST || '127.0.0.1';
@@ -62,6 +63,7 @@ const main = async () => {
     : {};
   const hub = new Hub({ dataDir, auth, console, router });
   const assistant = new Assistant({ hub, console, apiKey: env.OPENROUTER_API_KEY, model: env.HUB_ASSISTANT_MODEL });
+  const telegram = new Telegram({ hub, console, dataDir, botToken: env.TELEGRAM_BOT_TOKEN, owner: env.TELEGRAM_OWNER, api: env.TELEGRAM_API });
   const context = createContext({ hub, auth, console, assistant });
   const tls = env.HUB_KEY && env.HUB_CERT;
   const options = {
@@ -78,12 +80,14 @@ const main = async () => {
   serveWeb(server.httpServer, path.join(__dirname, 'web'));
   guardSockets(server.wsServer, console);
   await server.listen();
-  console.log(`hub: ${tls ? 'wss' : 'ws'}://${host}:${port}  data ${dataDir}  router ${router.apiKey ? router.model : 'heuristic'}  assistant ${assistant.enabled ? assistant.model : 'off (no OPENROUTER_API_KEY)'}`);
+  console.log(`hub: ${tls ? 'wss' : 'ws'}://${host}:${port}  data ${dataDir}  router ${router.apiKey ? router.model : 'heuristic'}  assistant ${assistant.enabled ? assistant.model : 'off (no OPENROUTER_API_KEY)'}  telegram ${telegram.enabled ? 'on' : 'off (no TELEGRAM_BOT_TOKEN)'}`);
+  telegram.start();
   if (host !== '127.0.0.1' && host !== 'localhost' && !tls) {
     console.warn('hub: listening on a non-local address without TLS; put it behind Caddy or Tailscale');
   }
   const stop = async () => {
     console.log('hub: stopping');
+    telegram.stop();
     await server.close();
     process.exit(0);
   };

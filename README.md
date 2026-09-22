@@ -165,11 +165,28 @@ home screen. The client (`hub/web`, no build step) is black and white, zero radi
 block buttons, terminal inputs with a `>` prompt, and the mark, five lines meeting in the
 centre, is the logo and, spinning, the loader (header while reconnecting, corner
 while a call is in flight, inside an agent card while it works). Agents with status (inverted
-card when blocked on a question, *done* tag when a turn finished), the room stream, a composer
-with *auto* / *room* / agent targets, and a *screen* button per agent that shows its terminal
+card when blocked on a question, *done* tag when a turn finished; live ones first, the ones
+that need you in front), the room stream, a composer addressed like the terminal chat (`@` pops
+the member list, `@Alex …` goes to that agent, `@room` to everyone, no mention lets the hub
+pick; tapping a card fills the mention in), and a *screen* button per agent that shows its terminal
 with Enter / Esc / y / arrows / Cancel keys and a `>` field that types into it. Long-press the
 logo to forget the token. On this Mac that is `http://127.0.0.1:8900/`; from a phone use the
 tunnel below.
+
+### Telegram
+
+A Telegram group can be a window on a room, for you and for people who should only watch.
+Make a bot with [@BotFather](https://t.me/BotFather), turn its privacy mode off
+(`/setprivacy` → Disable, otherwise the bot only sees `/commands` in groups), and give the
+hub `TELEGRAM_BOT_TOKEN` plus `TELEGRAM_OWNER` (your Telegram username or numeric id; unset,
+whoever sends the first `/join` becomes the owner and is kept in `telegram.json`). Add the bot
+to the group and type `/join dev`. From then on the group receives the room stream (says,
+commands, agents that need you: `Alex needs you: Do you want to proceed?`), and your messages
+go in exactly like from the phone composer: `@Alex run tests` is a command, `@auto …` lets the
+hub pick, anything else is posted to the room as `tg:you`. `/agents` lists the room,
+`/read Alex` shows the last 40 lines of its screen, `/leave` unbinds. Messages from other
+group members are not relayed. The connector lives in the hub process (`hub/lib/telegram.js`,
+long polling, no webhook or public URL needed); the group's own lines are never echoed back.
 
 ## Hub on the Hetzner VM (done)
 
@@ -205,8 +222,8 @@ private network. Two good options:
 **A. Hub on the VPS behind Caddy (TLS, public address).**
 
 ```bash
-scp -r metacom hub user@vps:~/metacomdev/ && ssh user@vps
-cd ~/metacomdev/hub/deploy && cp .env.example .env    # set HUB_DOMAIN
+scp -r metacom hub user@vps:~/metacom/ && ssh user@vps
+cd ~/metacom/hub/deploy && cp .env.example .env    # set HUB_DOMAIN
 docker compose up -d --build
 docker compose exec hub cat /data/bootstrap-token.txt  # then: docker compose exec hub rm /data/bootstrap-token.txt
 ```
@@ -221,6 +238,38 @@ Flow needs its config reloaded (`flow cmd reload`).
 the VPS and the phone; run the hub with `HUB_HOST=<tailscale ip>` (see
 `deploy/install-launchd.sh`), and use `ws://<tailscale ip>:8900/` everywhere. Nothing is
 public; Tailscale encrypts the link. Simplest and strongest when you own all the devices.
+
+## Where this goes: connectors and declared tools
+
+Telegram is the first *connector*: a room member that is not a terminal but a bridge, living
+in the hub and listening on `hub.events` (`room/message`, `agents/attention`, `agents/changed`).
+The intended shape, so the next ones fit the same mould:
+
+- **Methods carry their access.** Today `hub/api/index.js` is one file, every method is
+  `access: 'public'` and the real checks (`owner()`, "Not your room") sit inside `hub.js`.
+  Impress conventions fix that: `api/<unit>/<method>.js` exporting `{ access, roles, rooms,
+  parameters, method }`, arguments validated against the schema at the door, and
+  `system/introspect` answering each caller with only what it may call. The conventions can
+  be adopted without the Impress runtime, keeping one process and no database; running on
+  Impress proper (sessions, scheduler, static, plugins) is the later option.
+- **A connector is a member with rules.** `{ name, kind: 'connector', url | in-process,
+  secret, rules: { rooms, events, from } }`: outbound, the hub delivers matching events (for
+  an external URL, signed and only to declared addresses); inbound, the connector calls the
+  ordinary API under its own token, so `accept` rules and the owner gate apply unchanged.
+  Telegram, Slack, a cron, Flow: all the same shape, rules decide what leaves a room.
+- **Endpoints are tools with declared permission.** The assistant's `tools.js` and the agents'
+  MCP list in `cli/lib/mcp.js` are hand-written today. A method (or a connector's remote
+  endpoint) that declares `tool: { description }`, `parameters` and `access: { roles, rooms,
+  groups }` is exposed automatically as an MCP tool to agents in those rooms, as an assistant
+  tool, and in introspect; groups are named member sets a room grants tools to. The hub
+  validates every call before forwarding, so the closed, typed tool set stays closed, only
+  declared per room instead of hard-coded.
+- **Anything from outside is data.** Tool results and connector messages are shown to agents
+  as text, never as instructions; per-room allowlists stay small; agents never fetch arbitrary
+  URLs, only declared connectors do.
+
+Order: method metadata + schema validation + filtered introspect; MCP tools generated from
+it; connectors with outbound rules (Telegram already has the in-process half); remote tools.
 
 ## Security
 

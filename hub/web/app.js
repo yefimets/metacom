@@ -155,18 +155,37 @@ const glyphFor = (m) => {
   return el('i', `glyph ${m.status}`);
 };
 
+// Live agents first, the ones that need you before the rest; stopped ones trail.
+const rank = (m) => (!m.connected ? 3 : m.status === 'blocked' ? 0 : m.attention ? 1 : 2);
+const roomAgents = () =>
+  state.members.filter((m) => m.kind === 'agent' && (!state.room || m.room === state.room)).sort((a, b) => rank(a) - rank(b));
+
+// MARK: addressing. Like the terminal chat: a message that starts with "@Name" goes to that
+// agent, "@room" is posted to the room, anything else (or "@auto") lets the hub pick.
+const MENTION = /^@(\S+)\s*/;
+const MENTION_OR_AT = /^@\S*\s*/; // also a bare "@" the popup is completing
+const leadingMention = (text) => {
+  const m = MENTION.exec(text);
+  return m ? m[1] : '';
+};
+const setMention = (name) => {
+  const t = $('text');
+  const rest = t.value.replace(MENTION_OR_AT, '');
+  t.value = name ? `@${name} ${rest}` : rest;
+  t.focus();
+  t.setSelectionRange(t.value.length, t.value.length);
+  onTextChange();
+};
+
 const renderAgents = () => {
   const box = $('agents');
   box.replaceChildren();
-  const target = $('target');
-  const keep = target.value;
-  target.replaceChildren(new Option('auto', 'auto'), new Option('room', 'room'));
-  const list = state.members.filter((m) => !state.room || m.room === state.room);
-  for (const m of list) {
-    if (m.kind !== 'agent') continue;
+  const current = leadingMention($('text').value);
+  for (const m of roomAgents()) {
     const done = m.attention && m.status !== 'blocked';
     const status = m.connected ? m.status : 'stopped';
-    const card = el('div', `agent ${status}${done ? ' done' : ''}${keep === m.name ? ' selected' : ''}`);
+    const card = el('div', `agent ${status}${done ? ' done' : ''}${current === m.name ? ' selected' : ''}`);
+    card.dataset.name = m.name;
     const title = el('div', 'name');
     title.append(glyphFor(m), el('span', '', m.name));
     card.append(title);
@@ -188,15 +207,51 @@ const renderAgents = () => {
       card.append(row);
     }
     card.onclick = () => {
-      target.value = m.name;
-      for (const c of box.children) c.classList.toggle('selected', c === card);
-      $('text').focus();
+      setMention(leadingMention($('text').value) === m.name ? '' : m.name);
       if (m.attention) state.hub.call('agents/seen', { name: m.name }).catch(() => {});
     };
     box.append(card);
-    target.append(new Option(m.name, m.name));
   }
-  if ([...target.options].some((o) => o.value === keep)) target.value = keep;
+};
+
+// The member list pops up over the input while the caret sits in a leading "@..." token.
+const mentionChoices = () => {
+  const fixed = [
+    { name: 'auto', meta: 'hub picks an agent' },
+    { name: 'room', meta: 'everyone' },
+  ];
+  const agents = roomAgents().map((m) => ({ name: m.name, meta: m.connected ? m.status : 'stopped' }));
+  return [...fixed, ...agents];
+};
+const renderMention = () => {
+  const box = $('mention');
+  const t = $('text');
+  const m = /^@(\S*)$/.exec(t.value.slice(0, t.selectionStart));
+  if (!m || document.activeElement !== t) {
+    box.classList.add('hidden');
+    return;
+  }
+  const typed = m[1].toLowerCase();
+  const list = mentionChoices().filter((c) => c.name.toLowerCase().startsWith(typed));
+  box.replaceChildren();
+  box.classList.toggle('hidden', list.length === 0);
+  for (const c of list) {
+    const b = el('button', c.name === leadingMention(t.value) ? 'current' : '');
+    b.type = 'button';
+    b.append(el('span', 'name', `@${c.name}`), el('span', 'meta', c.meta));
+    // pointerdown: pick before the textarea loses focus and the list hides
+    b.onpointerdown = (e) => {
+      e.preventDefault();
+      setMention(c.name);
+      $('mention').classList.add('hidden');
+    };
+    box.append(b);
+  }
+};
+const onTextChange = () => {
+  const current = leadingMention($('text').value);
+  for (const c of $('agents').children) c.classList.toggle('selected', c.dataset.name === current);
+  renderMention();
 };
 
 const openScreen = async (name) => {
@@ -245,6 +300,9 @@ const renderMedia = (list) => {
       img.src = f.url;
       img.alt = f.name;
       img.loading = 'lazy';
+      img.onload = () => {
+        if (scroll.pinned) scroll.toBottom();
+      };
       a.append(img);
     } else {
       a.className = 'doc';
@@ -255,12 +313,63 @@ const renderMedia = (list) => {
   return box;
 };
 
+// MARK: scrolling. The stream stays pinned to the bottom until the reader scrolls up; from
+// then on new messages count up in a pill ("3 new") that jumps to the first of them.
+const scroll = {
+  pinned: true,
+  unread: 0,
+  first: null,
+  atBottom() {
+    const s = $('stream');
+    return s.scrollHeight - s.scrollTop - s.clientHeight < 40;
+  },
+  toBottom() {
+    const s = $('stream');
+    s.scrollTop = s.scrollHeight;
+  },
+  // after a render: once now, once more after layout (fonts, images with known size, the keyboard)
+  settle() {
+    this.toBottom();
+    requestAnimationFrame(() => this.toBottom());
+    setTimeout(() => this.toBottom(), 120);
+  },
+  arrived(node) {
+    if (this.pinned) return this.toBottom();
+    this.unread++;
+    if (!this.first) this.first = node;
+    this.pill();
+  },
+  seen() {
+    this.unread = 0;
+    this.first = null;
+    this.pill();
+  },
+  pill() {
+    const p = $('unread');
+    p.textContent = this.unread ? `${this.unread} new ↓` : '';
+    p.classList.toggle('hidden', this.unread === 0);
+  },
+  jump() {
+    const target = this.first;
+    if (target) target.scrollIntoView({ block: 'start' });
+    else this.toBottom();
+    if (this.atBottom()) this.seen();
+    else this.first = null; // the next tap goes to the bottom
+  },
+};
+$('stream').addEventListener('scroll', () => {
+  scroll.pinned = scroll.atBottom();
+  if (scroll.pinned) scroll.seen();
+});
+$('unread').onclick = () => scroll.jump();
+
 const renderMessage = (m) => {
   const stream = $('stream');
   const placeholder = stream.querySelector('.empty');
   if (placeholder) placeholder.remove();
   if (m.kind === 'system') {
     stream.append(el('div', 'msg system', `${m.ts.slice(11, 16)} ${m.text}`));
+    if (scroll.pinned) scroll.toBottom();
     return;
   }
   const mine = state.me && m.from.name === state.me.name && m.from.role === 'owner';
@@ -271,9 +380,12 @@ const renderMessage = (m) => {
   if (m.kind !== 'say' && m.kind !== 'command') meta.append(document.createTextNode(' '), el('span', 'kind', `[${m.kind}]`));
   node.append(meta, document.createTextNode(m.text));
   if (Array.isArray(m.media) && m.media.length) node.append(renderMedia(m.media));
-  const atBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 40;
   stream.append(node);
-  if (atBottom || mine) stream.scrollTop = stream.scrollHeight;
+  if (mine) {
+    scroll.pinned = true;
+    scroll.seen();
+  }
+  scroll.arrived(node);
 };
 
 // MARK: attachments. Pasted, dropped or picked files wait in a strip above the input and
@@ -371,9 +483,11 @@ const loadRoom = async (room) => {
   state.room = room;
   store.set('hub.room', room);
   $('stream').replaceChildren(el('div', 'empty', 'no messages'));
+  scroll.pinned = true;
+  scroll.seen();
   const history = await withBusy(() => state.hub.call('room/history', { room, limit: 100 }));
   for (const m of history) renderMessage(m);
-  $('stream').scrollTop = $('stream').scrollHeight;
+  scroll.settle();
   renderAgents();
 };
 
@@ -381,7 +495,8 @@ const start = async (token) => {
   const hub = new Hub(wsUrl(), token);
   state.hub = hub;
   hub.onState = (on) => {
-    $('state').textContent = on ? 'online' : 'offline';
+    // the label for the room picker while connected; "offline" is the one state worth a word
+    $('state').textContent = on ? 'room' : 'offline';
     $('state').classList.toggle('on', on);
     $('headLogo').classList.toggle('spin', !on);
   };
@@ -424,8 +539,7 @@ const fitViewport = () => {
   root.setProperty('--vh', Math.round(vv.height) + 'px');
   root.setProperty('--vv-top', Math.round(vv.offsetTop) + 'px');
   document.body.classList.toggle('keyboard', window.innerHeight - vv.height > 120);
-  const stream = $('stream');
-  if (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80) stream.scrollTop = stream.scrollHeight;
+  if (scroll.pinned) scroll.toBottom();
 };
 if (vv) {
   vv.addEventListener('resize', fitViewport);
@@ -442,25 +556,34 @@ const autosize = () => {
   t.style.height = 'auto';
   t.style.height = Math.min(t.scrollHeight, viewportHeight() * 0.4) + 'px';
 };
-$('text').addEventListener('input', autosize);
+$('text').addEventListener('input', () => {
+  autosize();
+  onTextChange();
+});
+for (const ev of ['focus', 'click', 'keyup']) $('text').addEventListener(ev, renderMention);
+$('text').addEventListener('blur', () => $('mention').classList.add('hidden'));
 
 $('composer').onsubmit = async (event) => {
   event.preventDefault();
-  const text = $('text').value.trim();
+  const raw = $('text').value.trim();
+  const target = leadingMention(raw);
+  const agent = state.members.find((m) => m.kind === 'agent' && m.name === target);
+  // the mention comes off for a known agent or the room; "auto" keeps it, the router reads names
+  const text = agent || target === 'room' ? raw.replace(MENTION, '').trim() : raw;
   if (!text && files.length === 0) return;
-  const target = $('target').value;
   const button = $('send');
   button.disabled = true;
   try {
     await withBusy(async () => {
       const media = await uploadAll();
       if (target === 'room') await state.hub.call('room/say', { room: state.room, text, media });
-      else if (target === 'auto') await state.hub.call('agents/dispatch', { text, room: state.room, media });
-      else await state.hub.call('agents/send', { to: target, text, kind: 'command', media });
+      else if (agent) await state.hub.call('agents/send', { to: agent.name, text, kind: 'command', media });
+      else await state.hub.call('agents/dispatch', { text, room: state.room, media });
     });
-    $('text').value = '';
+    $('text').value = agent ? `@${agent.name} ` : '';
     clearFiles();
     autosize();
+    onTextChange();
   } catch (error) {
     toast(error.message);
   } finally {

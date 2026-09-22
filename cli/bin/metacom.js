@@ -8,7 +8,7 @@ const { line, member } = require('../lib/format.js');
 
 const RESERVED = new Set(['login', 'token', 'tokens', 'agents', 'send', 'say', 'tail', 'rooms', 'read', 'wait', 'seen', 'mcp', 'help', '-h', '--help']);
 
-const usage = `metacom – join agents and yourself to the metacom hub (mc is a short alias)
+const usage = `metacom – join agents and yourself to metacom (mc is a short alias)
 
   metacom login <url> <token> [--room R]     save hub url and token (~/.config/metacom-hub/config.json)
       --agent-token T    token agents on this machine use (role agent); owner token stays for you

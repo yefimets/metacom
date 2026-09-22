@@ -15,6 +15,8 @@ cat > "$PLIST" <<PLIST
     <key>HUB_HOST</key><string>${HUB_HOST:-127.0.0.1}</string>
     <key>HUB_PORT</key><string>${HUB_PORT:-8900}</string>
     <key>OPENROUTER_API_KEY</key><string>${OPENROUTER_API_KEY:-}</string>
+    <key>TELEGRAM_BOT_TOKEN</key><string>${TELEGRAM_BOT_TOKEN:-}</string>
+    <key>TELEGRAM_OWNER</key><string>${TELEGRAM_OWNER:-}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

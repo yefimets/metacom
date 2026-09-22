@@ -21,7 +21,9 @@
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; border-radius: 0 !important; -webkit-tap-highlight-color: transparent; }
-  html { height: 100%; overflow: hidden; }
+  /* iOS Safari inflates text in wide blocks ("font boosting"): the stream came out at ~24px
+     while the header stayed at 14. Pin the size. */
+  html { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* The body is pinned to the visual viewport: app.js keeps --vh and --vv-top in step with
      the on-screen keyboard on iOS, where the layout viewport does not shrink. */
   body {
@@ -36,7 +38,7 @@
   /* iOS Safari zooms the page when a focused field is set below 16px; keep fields at 16px on touch. */
   @media (pointer: coarse) {
     input, select, textarea { font-size: 16px; }
-    header .field > select, #composer .field.select > select { font-size: 16px; }
+    header .field > select { font-size: 16px; }
   }
   button { cursor: pointer; }
 
@@ -111,7 +113,10 @@
   .agent.blocked.selected { box-shadow: inset 0 -3px 0 0 var(--bg); }
 
   /* stream */
+  #streamWrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
   #stream { flex: 1; overflow-y: auto; padding: 8px 16px 12px; display: flex; flex-direction: column; gap: 2px; overscroll-behavior: contain; }
+  /* unread pill: sits over the bottom of the stream, jumps to the first unread message */
+  #unread { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 5; height: 32px; line-height: 30px; padding: 0 14px; }
   .msg { white-space: pre-wrap; word-break: break-word; padding: 3px 0; }
   .msg .meta { color: var(--dim); font-size: 11px; }
   .msg .meta .from { color: var(--fg); }
@@ -128,8 +133,6 @@
   /* with the keyboard up the home-indicator inset is under the keyboard, not under us */
   body.keyboard #composer, body.keyboard #screen .keys { padding-bottom: 10px; }
   #composer .line { display: flex; gap: 8px; align-items: stretch; }
-  #composer .field.select { flex: 0 0 auto; max-width: 42%; }
-  #composer .field.select > select { text-transform: uppercase; font-size: 12px; }
   #composer .field.text { flex: 1; }
   #composer #send { flex: 0 0 auto; height: auto; min-height: 36px; }
   #composer #attach { flex: 0 0 auto; height: auto; min-height: 36px; width: 36px; padding: 0; font-size: 18px; line-height: 34px; text-align: center; }
@@ -147,11 +150,14 @@
   .msg .media img { max-width: min(100%, 320px); max-height: 240px; display: block; border: 1px solid var(--faint); }
   .msg .media a { color: var(--fg); }
   .msg .media a.doc { border: 1px solid var(--fg); padding: 4px 8px; font-size: 12px; text-decoration: none; }
-  @media (max-width: 520px) {
-    #composer .line { flex-wrap: wrap; }
-    #composer .field.select { flex: 1 1 100%; max-width: none; }
-    #composer .field.text { flex: 1 1 0; }
-  }
+  /* who gets the message: "@" in the input opens the member list; a tap fills the mention in */
+  #mention { display: flex; flex-direction: column; border: 1px solid var(--fg); max-height: 40dvh; overflow-y: auto; }
+  #mention button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--faint); }
+  #mention button:last-child { border-bottom: 0; }
+  #mention button:active, #mention button.current { background: var(--fg); color: var(--bg); }
+  #mention button .name { font-weight: 700; }
+  #mention button .meta { color: var(--dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
+  #mention button.current .meta { color: #444; }
 
   /* overlays */
   .overlay { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; z-index: 10; }
@@ -193,19 +199,22 @@
   <svg class="logo" id="headLogo"><use href="#mark"/></svg>
   <span class="title">metacom</span>
   <span class="spacer"></span>
-  <span id="state">offline</span>
+  <span id="state" title="connection">offline</span>
   <label class="field select"><select id="room" aria-label="room"></select></label>
 </header>
 
 <div id="agents"></div>
-<div id="stream"><div class="empty">no messages</div></div>
+<div id="streamWrap">
+  <div id="stream"><div class="empty">no messages</div></div>
+  <button id="unread" class="btn hidden" type="button"></button>
+</div>
 
 <form id="composer" autocomplete="off">
   <div id="files" class="hidden"></div>
+  <div id="mention" class="hidden"></div>
   <div class="line">
-    <label class="field select"><span class="prompt">@</span><select id="target" aria-label="target"><option value="auto">auto</option><option value="room">room</option></select></label>
-    <label class="field text"><span class="prompt">&gt;</span><textarea id="text" rows="1" placeholder="instruction · paste or drop an image" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></label>
     <label id="attach" class="btn ghost" title="attach a file">+<input id="fileInput" type="file" accept="image/*,.pdf,.txt,.md" multiple></label>
+    <label class="field text"><textarea id="text" rows="1" placeholder="@agent instruction · paste or drop an image" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></label>
     <button id="send" class="btn" type="submit">send</button>
   </div>
 </form>

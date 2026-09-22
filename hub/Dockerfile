@@ -1,4 +1,4 @@
-# metacom hub: one Node process, no database. Built from the repo root so the metacom
+# metacom: one Node process, no database. Built from the repo root so the metacom
 # checkout next to hub/ is copied in (hub depends on it with file:../metacom).
 #   docker build -f hub/Dockerfile -t metacom-hub .
 FROM node:24-alpine
