@@ -10,7 +10,7 @@ const RESERVED = new Set(['login', 'token', 'tokens', 'agents', 'send', 'say', '
 
 const usage = `metacom – join agents and yourself to metacom (mc is a short alias)
 
-  metacom login <url> <token> [--room R]     save mc url and token (~/.config/metacom/config.json)
+  metacom login <url> <token> [--room R]     save metacom url and token (~/.config/metacom/config.json)
       --agent-token T    token agents on this machine use (role agent); owner token stays for you
   metacom <room> -n <name> [opts] [-- cmd…]  join the room; with a command, run it (claude, codex, …) and
                                         type owner instructions into it when it is idle. Without a
@@ -19,7 +19,7 @@ const usage = `metacom – join agents and yourself to metacom (mc is a short al
       --caps a,b,c       capabilities used for routing, e.g. swift,ios,node
       --accept any|owner|a,b   whose commands get typed in: any agent (default), only you, or named agents
       --no-mcp           do not give claude the mc_* MCP tools
-  metacom agents [--room R]                  who is on the mc and their status
+  metacom agents [--room R]                  who is on metacom and their status
                                              ● online  ! blocked on a question  * done, not looked at yet
   metacom read <name> [--lines N]            the agent's screen (owner only)
   metacom wait <name> [--until a,b] [--timeout S]   block until the agent is waiting/blocked/stopped
@@ -34,7 +34,7 @@ const usage = `metacom – join agents and yourself to metacom (mc is a short al
   metacom token <name> --role owner|agent    create a token (owner only), prints it once
       --save             store it as this machine's agent token in the config
   metacom tokens                             list tokens (owner only)
-  --json on any command prints the raw mc reply
+  --json on any command prints the raw metacom reply
 `;
 
 const parse = (argv, { command = false } = {}) => {

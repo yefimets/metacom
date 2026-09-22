@@ -1,8 +1,8 @@
 {
-  "name": "metacom-cli",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Join a coding agent (claude, codex, any terminal program) to metacom: room, directed messages, status, MCP tools.",
+  "name": "@metacomdev/cli",
+  "version": "0.2.0",
+  "private": false,
+  "description": "metacom command: joins a coding agent (claude, codex, any terminal program) or you to a metacom organisation \u2014 wrapper with live status, MCP tools, terminal chat.",
   "bin": {
     "metacom": "bin/metacom.js",
     "mc": "bin/mc.js"
@@ -21,7 +21,7 @@
     "@xterm/headless": "^6.0.0",
     "cli-spinners": "^3.4.0",
     "ink": "^7.1.1",
-    "metacom": "file:../metacom",
+    "metacom": "github:metarhia/metacom#41e8d16",
     "node-pty": "^1.1.0",
     "react": "^19.3.0",
     "string-width": "^8.2.0",
@@ -32,5 +32,10 @@
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "typescript": "^7.0.2"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/metacomdev/cli.git"
   }
 }

@@ -86,7 +86,7 @@ export const COMMANDS = [
 
 export const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
 
-/// One-word state for a member as humans think of it, not the raw mc status.
+/// One-word state for a member as humans think of it, not the raw metacom status.
 export const stateOf = (m: Member): string => {
   if (!m.connected) return "offline";
   if (m.kind === "human") return "online";
@@ -98,7 +98,7 @@ export const stateOf = (m: Member): string => {
 let seq = 0;
 const id = () => `e${++seq}`;
 
-/// Everything about the room that is not rendering: the mc connection, members, the log
+/// Everything about the room that is not rendering: the metacom connection, members, the log
 /// of what is on screen, and the actions the composer triggers. React subscribes to it.
 export class Store {
   state: State;
@@ -291,7 +291,7 @@ export class Store {
 
   // MARK: actions
 
-  /// False when the mc refused it, so the app can give the draft back.
+  /// False when metacom refused it, so the app can give the draft back.
   async submit(text: string): Promise<boolean> {
     const t = text.trim();
     if (!t) {
