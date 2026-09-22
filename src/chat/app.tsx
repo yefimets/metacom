@@ -40,7 +40,6 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
     kind = "mention";
     query = text.slice(1);
     const all = [...members.values()].filter((m) => m.name !== me);
-    if (start === 0 && all.some((m) => m.kind === "agent")) all.push({ name: "auto", kind: "route", room: "", status: "", connected: true, attention: false, reason: null });
     items = all
       .map((m) => ({ m, rank: match(m.name, query) }))
       .filter((x) => x.rank >= 0)

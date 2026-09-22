@@ -21,7 +21,6 @@ export const Glyph = ({ member, animate = true }: { member: Member; animate?: bo
   const theme = useTheme();
   const state = stateOf(member);
   if (member.kind === "human") return <Text color={member.connected ? theme.colors.success : theme.colors.mutedForeground}>{member.connected ? "◆" : "◇"}</Text>;
-  if (member.kind === "route") return <Text color={theme.colors.accent}>◎</Text>;
   if (state === "working") return animate ? <Dots color={theme.colors.success} /> : <Text color={theme.colors.success}>●</Text>;
   if (state === "waiting") return <Text color={theme.colors.success}>●</Text>;
   if (state === "blocked")

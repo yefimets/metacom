@@ -7,9 +7,9 @@ const room = 'tuitest';
 const main = async () => {
   for (const k of Object.keys(process.env)) if (k.startsWith('MC_')) delete process.env[k];
   const cfg = config.load();
-  const ownerHub = await connect({ url: cfg.url, token: cfg.token });
-  const owner = ownerHub.me.role === 'owner';
-  ownerHub.m.close();
+  const ownerConn = await connect({ url: cfg.url, token: cfg.token });
+  const owner = ownerConn.me.role === 'owner';
+  ownerConn.m.close();
   console.log('owner token:', owner);
   const agent = await connect({ url: cfg.url, token: cfg.agentToken || cfg.token });
   await agent.api.agents.register({ name: 'Alex', room, kind: 'agent', host: 'testbox' });

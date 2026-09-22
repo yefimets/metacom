@@ -28,7 +28,7 @@ export const Popup = ({ popup, room }: { popup: PopupState; room: number }) => {
         const mark = active ? "›" : " ";
         if (popup.kind === "mention" && item.member) {
           const m = item.member;
-          const state = m.kind === "route" ? "the hub picks an agent" : stateOf(m);
+          const state = stateOf(m);
           const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.reason && state === "blocked" ? m.reason : ""].filter(Boolean).join("  ");
           return (
             <Text key={item.label} wrap="truncate-end">

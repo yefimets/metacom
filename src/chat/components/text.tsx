@@ -15,7 +15,7 @@ export const Highlighted = ({ text, members, color }: { text: string; members: M
   let i = 0;
   for (const m of text.matchAll(MENTION)) {
     const [all, pre, word] = m;
-    const known = members.has(word!) || word === "auto";
+    const known = members.has(word!);
     if (!known) continue;
     const start = m.index! + pre!.length;
     if (start > last) parts.push(<Text key={i++} color={color ?? theme.colors.foreground}>{text.slice(last, start)}</Text>);
