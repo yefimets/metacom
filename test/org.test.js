@@ -68,7 +68,7 @@ test('metacom: wait resolves on a status change, and send --wait observes a turn
 test('metacom: system events, room rollups, and offline on disconnect', async () => {
   const { org, ownerConn, agentConn, agentClient } = setup();
   org.setStatus(agentConn, 'working', 'progress');
-  assert.deepStrictEqual(org.rooms().find((r) => r.room === 'dev'), { room: 'dev', agents: 1, online: 1, working: 1, blocked: 0, attention: 0 });
+  assert.deepStrictEqual(org.rooms().find((r) => r.room === 'dev'), { room: 'dev', agents: 1, online: 1, working: 1, blocked: 0, attention: 0, encrypted: false });
   agentClient.emit('close');
   const list = org.list(ownerConn);
   assert.strictEqual(list[0].connected, false);

@@ -18,7 +18,7 @@ const buildApi = ({ org, auth, console, assistant }) => {
       }),
     },
     auth: {
-      signin: method(async ({ token } = {}, context) => {
+      signin: method(async ({ token, publicKey } = {}, context) => {
         const { client } = context;
         const ip = client.source;
         if (auth.blocked(ip)) throw fail(429, 'Too many failed sign-ins, try later');
@@ -29,8 +29,8 @@ const buildApi = ({ org, auth, console, assistant }) => {
           throw fail(401, 'Bad token');
         }
         if (org.conns.has(client)) return org.from(org.conns.get(client));
-        const conn = org.bind(client, record, ip);
-        return org.from(conn);
+        const conn = org.bind(client, record, ip, publicKey || null);
+        return { ...org.from(conn), serverPublicKey: org.keys.serverPublicKey };
       }),
       whoami: method(async (args, context) => org.from(org.identify(context, args))),
     },
@@ -53,6 +53,35 @@ const buildApi = ({ org, auth, console, assistant }) => {
       list: method(async (args = {}, context) => {
         org.identify(context, args);
         return org.rooms();
+      }),
+    },
+    /// Room encryption: devices seal room keys to each other; the server only stores them.
+    keys: {
+      list: method(async ({ room, ...rest } = {}, context) => {
+        org.owner(org.identify(context, rest));
+        if (!room) throw fail(400, 'room is required');
+        return org.keys.list(String(room).slice(0, 64));
+      }),
+      put: method(async ({ room, sealed, ...rest } = {}, context) => {
+        org.owner(org.identify(context, rest));
+        if (!room) throw fail(400, 'room is required');
+        const result = org.keys.put(String(room).slice(0, 64), sealed);
+        org.broadcast('keys/changed', { room: result.room });
+        org.system(result.room, `room key shared with ${result.devices} device${result.devices === 1 ? '' : 's'}`);
+        return result;
+      }),
+      revoke: method(async ({ room, publicKey, ...rest } = {}, context) => {
+        org.owner(org.identify(context, rest));
+        const removed = org.keys.revoke(String(room || '').slice(0, 64), String(publicKey || ''));
+        if (removed) org.broadcast('keys/changed', { room });
+        return { removed };
+      }),
+      get: method(async ({ room, publicKey, ...rest } = {}, context) => {
+        const conn = org.identify(context, rest);
+        const pub = conn.publicKey || publicKey;
+        if (!pub) throw fail(400, 'sign in with a publicKey first');
+        const target = String(room || '').slice(0, 64);
+        return { room: target, encrypted: org.keys.encrypted(target), sealed: org.keys.sealedFor(target, pub) };
       }),
     },
     assistant: {
