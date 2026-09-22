@@ -6,5 +6,5 @@
 		X-Frame-Options DENY
 		Referrer-Policy no-referrer
 	}
-	reverse_proxy org:8900
+	reverse_proxy metacom:8900
 }

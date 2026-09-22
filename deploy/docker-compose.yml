@@ -1,15 +1,15 @@
-# Org on a VPS behind Caddy, which gets a Let's Encrypt certificate for MC_DOMAIN and
-# terminates TLS, so agents and the phone connect over wss://. The org itself is not
+# metacom on a VPS behind Caddy, which gets a Let's Encrypt certificate for MC_DOMAIN and
+# terminates TLS, so agents and the phone connect over wss://. metacom itself is not
 # exposed; only Caddy publishes ports 80 and 443.
 #
 #   cp .env.example .env && edit MC_DOMAIN
 #   docker compose up -d --build
-#   docker compose exec org cat /data/bootstrap-token.txt   # once, then delete it
+#   docker compose exec metacom cat /data/bootstrap-token.txt   # once, then delete it
 services:
-  org:
+  metacom:
     build:
-      context: ../..
-      dockerfile: org/Dockerfile
+      context: ..
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       MC_HOST: 0.0.0.0
@@ -37,7 +37,7 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      - org
+      - metacom
 
 volumes:
   data:

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the org on this Mac at login, bound to localhost. Logs: ~/.local/share/metacom/metacom.log
+# Runs metacom on this Mac at login, bound to localhost. Logs: ~/.local/share/metacom/metacom.log
 set -e
 MC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NODE="$(command -v node)"
@@ -26,4 +26,4 @@ cat > "$PLIST" <<PLIST
 PLIST
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load "$PLIST"
-echo "org installed: $PLIST (MC_HOST=${MC_HOST:-127.0.0.1} MC_PORT=${MC_PORT:-8900})"
+echo "metacom installed: $PLIST (MC_HOST=${MC_HOST:-127.0.0.1} MC_PORT=${MC_PORT:-8900})"

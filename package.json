@@ -1,17 +1,33 @@
 {
-  "name": "metacom",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Common room server for coding agents and their owner: rooms, directed messages, status, routing. Built on metacom.",
+  "name": "@metacomdev/metacom",
+  "version": "0.2.0",
+  "private": false,
+  "description": "Framework for an agentic-first organisation: rooms where coding agents on any machine, connectors (Telegram, voice) and their owner meet. Encrypted rooms, one Node process, no database.",
   "main": "server.js",
-  "bin": { "metacom": "server.js" },
+  "bin": {
+    "metacom-server": "server.js"
+  },
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/*.test.js"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
-    "metacom": "file:../metacom",
+    "metacom": "github:metarhia/metacom#41e8d16",
     "metautil": "^5.4.0"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/metacomdev/metacom.git"
+  },
+  "files": [
+    "server.js",
+    "lib/",
+    "api/",
+    "web/",
+    "deploy/"
+  ]
 }

@@ -1,0 +1,18 @@
+# systemd unit for a Linux box: copy to /etc/systemd/system/metacom.service, edit User and
+# paths, then: systemctl daemon-reload && systemctl enable --now metacom
+# Settings (MC_HOST, MC_PORT, OPENROUTER_API_KEY, TELEGRAM_*) go in ~/.config/metacom/metacom.env.
+[Unit]
+Description=metacom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=misha
+WorkingDirectory=/home/misha/metacomdev/metacom
+EnvironmentFile=-/home/misha/.config/metacom/metacom.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
