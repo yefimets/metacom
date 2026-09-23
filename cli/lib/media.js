@@ -101,6 +101,21 @@ const clipboardText = () => {
   }
 };
 
+/// Put text on the clipboard. Returns false when this machine has no tool for it, so the
+/// caller can fall back to OSC 52, which asks the terminal to do it — the only way that
+/// works over ssh.
+const copyText = (text) => {
+  const run = (cmd, args) => execFileSync(cmd, args, { input: text, stdio: ['pipe', 'ignore', 'ignore'], timeout: 5000 });
+  try {
+    if (process.platform === 'darwin') run('pbcopy', []);
+    else if (process.env.WAYLAND_DISPLAY) run('wl-copy', []);
+    else run('xclip', ['-selection', 'clipboard', '-in']);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /// The image on the clipboard as a png file, or null when there is none (or no tool for it).
 /// macOS asks the clipboard through osascript; Linux tries wl-paste, then xclip.
 const clipboardImage = () => {
@@ -136,4 +151,4 @@ const clipboardImage = () => {
 /// ` [shot.png 12 KB]` for message lines.
 const describe = (media) => (Array.isArray(media) && media.length ? ' ' + media.map((m) => `[${m.name} ${pretty(m.size || 0)}]`).join(' ') : '');
 
-module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, clipboardImage, clipboardText, describe, pretty };
+module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, clipboardImage, clipboardText, copyText, describe, pretty };

@@ -11,6 +11,7 @@ import { Composer, INPUT_ROWS, layout } from "@/chat/components/composer";
 import { Footer } from "@/chat/components/footer";
 import { SPIN_INTERVAL } from "@/chat/components/glyph";
 import { MessageLine, actionAt, type Action } from "@/chat/components/message";
+import { type Selection, isEmpty, textOf, wrapLines } from "@/chat/selection";
 import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
@@ -42,8 +43,10 @@ const MODIFIED_ENTER = /\u001b\[(?:13|10);(\d+)(?::\d+)?u|\u001b\[27;(\d+);(?:13
 const ALT_ON = "\u001b[?1049h\u001b[H";
 const ALT_OFF = "\u001b[?1049l";
 const WHEEL_LINES = 3;
-const MOUSE_ON = "\u001b[?1000h\u001b[?1006h";
-const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
+/// Button presses and movement while a button is down (1002), in the SGR encoding (1006):
+/// enough to follow a drag, without a report for every idle twitch of the pointer.
+const MOUSE_ON = "\u001b[?1000h\u001b[?1002h\u001b[?1006h";
+const MOUSE_OFF = "\u001b[?1006l\u001b[?1002l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
 /// Everything written by the terminal rather than typed, so ink does not put it in the message.
 const REPORTS = /\u001b\[<\d+;\d+;\d+[Mm]/g;
@@ -92,12 +95,12 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
   return { kind, items, index: same ? previous.index : 0, query };
 };
 
-const EntryView = ({ entry, members, nameW, state }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"] }) => {
+const EntryView = ({ entry, members, nameW, state, width, bodyTop, selection }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; width: number; bodyTop: number; selection: Selection | null }) => {
   switch (entry.type) {
     case "banner":
       return <Banner room={state.room} url={state.url} me={state.me.name} role={state.me.role} />;
     case "message":
-      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} />;
+      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} width={width} top={bodyTop} selection={selection} />;
     case "note":
       return <Note text={entry.text} tone={entry.tone} />;
     case "rule":
@@ -199,8 +202,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const mouse = state.mouse;
   const mouseRef = useRef(mouse);
   mouseRef.current = mouse;
-  const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[] }>({ room: "", members: new Map(), me: "", log: [] });
-  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log };
+  const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[]; width: number }>({ room: "", members: new Map(), me: "", log: [], width: 80 });
+  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log, width: columns };
 
   // MARK: the scrollback. The conversation lives in a window this draws, not in the terminal's
   // own scrollback, so the input stays pinned at the bottom while the wheel moves the history.
@@ -263,6 +266,43 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     [editor, refresh]
   );
 
+  /// Every body line on screen: its row, its left edge and its text. Read from the laid-out
+  /// tree, so it is what the reader can actually see and therefore select.
+  const feedLines = useCallback((): { row: number; left: number; text: string }[] => {
+    const { log, width } = clickState.current;
+    const content = contentRef.current;
+    const out: { row: number; left: number; text: string }[] = [];
+    if (!content) return out;
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = log[i];
+      if (entry?.type !== "message" || entry.msg.kind === "system") continue;
+      const inner = ((child as DOMElement).childNodes[0] as DOMElement | undefined) ?? (child as DOMElement);
+      const kids = inner.childNodes as unknown as DOMElement[];
+      const body = kids[kids.length - 2];
+      if (!body?.yogaNode) continue;
+      const at = screenAt(body);
+      wrapLines(entry.msg.text, width).forEach((text, n) => out.push({ row: at.top + n + 1, left: at.left, text }));
+    }
+    return out;
+  }, []);
+
+  /// Where each message's body starts on screen, so the lines can draw their own selection.
+  const [bodyTops, setBodyTops] = useState<Record<string, number>>({});
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const next: Record<string, number> = {};
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = clickState.current.log[i];
+      if (entry?.type !== "message" || entry.msg.kind === "system") continue;
+      const inner = ((child as DOMElement).childNodes[0] as DOMElement | undefined) ?? (child as DOMElement);
+      const kids = inner.childNodes as unknown as DOMElement[];
+      const body = kids[kids.length - 2];
+      if (body?.yogaNode) next[entry.id] = screenAt(body).top + 1;
+    }
+    setBodyTops((prev) => (Object.keys(next).every((k) => prev[k] === next[k]) && Object.keys(prev).length === Object.keys(next).length ? prev : next));
+  });
+
   /// The message whose action row was clicked, and which action. The entry's last child is
   /// that row, so the laid-out tree answers both without measuring text.
   const feedAction = useCallback((row: number, col: number): { msg: Message; action: Action } | undefined => {
@@ -302,6 +342,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       const line = child.nodeName === "ink-box" ? (child.childNodes[0] as DOMElement | undefined) : undefined;
       if (!line) continue;
       const at = screenAt(line);
+      if (process.env["MC_CLICK_DEBUG"]) fs.appendFileSync(process.env["MC_CLICK_DEBUG"]!, JSON.stringify({ feedName: entry.msg.from?.name, top: at.top, left: at.left, want: y }) + "\n");
       if (at.top !== y) continue;
       const from = entry.msg.from?.name ?? "";
       const fromW = terminalWidth(from);
@@ -310,6 +351,26 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return name && name !== me ? name : undefined;
     }
     return;
+  }, []);
+
+  /// A drag over the conversation paints a selection and puts it on the clipboard when the
+  /// button comes up — the terminal cannot do it while the chat is listening for clicks, so
+  /// the chat does it. A press and release in one cell is a click, not a selection.
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const selectionRef = useRef<Selection | null>(null);
+  selectionRef.current = selection;
+  const dragging = useRef(false);
+  // the press is remembered here as well as in state: the release arrives before React has
+  // re-rendered, and reading the old state there would turn a click into a stray selection
+  const anchor = useRef<{ row: number; col: number } | null>(null);
+  const onPress = useCallback((row: number, col: number) => {
+    dragging.current = true;
+    anchor.current = { row, col };
+    setSelection({ anchor: { row, col }, head: { row, col } });
+  }, []);
+  const onDrag = useCallback((row: number, col: number) => {
+    if (!dragging.current) return;
+    setSelection((s) => (s ? { ...s, head: { row, col } } : s));
   }, []);
 
   const onClick = useCallback(
@@ -345,6 +406,24 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     [address, feedAction, feedName, editor, refresh, store]
   );
 
+  const onRelease = useCallback(
+    (row: number, col: number) => {
+      dragging.current = false;
+      const started = anchor.current;
+      anchor.current = null;
+      const moved = started && (started.row !== row || started.col !== col);
+      if (!moved) {
+        setSelection(null);
+        return onClick(row, col);
+      }
+      const done: Selection = { anchor: started!, head: { row, col } };
+      setSelection(done);
+      const text = textOf(done, feedLines());
+      if (text) store.copy(text);
+    },
+    [onClick, feedLines, store]
+  );
+
   useEffect(() => {
     const onData = (data: Buffer | string) => {
       const seq = typeof data === "string" ? data : data.toString("utf8");
@@ -355,19 +434,21 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         swallow.current = reports.join("").replace(/\u001b/g, "");
         setTimeout(() => (swallow.current = ""), 0);
         MOUSE.lastIndex = 0;
-        let click: RegExpExecArray | null = null;
         let wheel = 0;
         for (let m = MOUSE.exec(seq); m; m = MOUSE.exec(seq)) {
           const button = Number(m[1]);
-          if (m[4] !== "M") continue;
-          // 64 is the wheel up, 65 the wheel down; 0 is the left button
-          if (button === 64) wheel -= WHEEL_LINES;
-          else if (button === 65) wheel += WHEEL_LINES;
-          else if (button === 0 && !click) click = m;
+          const col = Number(m[2]);
+          const row = Number(m[3]);
+          const pressed = m[4] === "M";
+          // 64 and 65 are the wheel; 32 is movement with the left button down; 0 is that button
+          if (pressed && button === 64) wheel -= WHEEL_LINES;
+          else if (pressed && button === 65) wheel += WHEEL_LINES;
+          else if (!mouseRef.current) continue;
+          else if (pressed && button === 0) onPress(row, col);
+          else if (pressed && button === 32) onDrag(row, col);
+          else if (!pressed) onRelease(row, col);
         }
         if (wheel) scrollBy(wheel);
-        // with clicking off, the reports are still dropped from the input but acted on by nobody
-        if (click && mouseRef.current) onClick(Number(click[3]), Number(click[2]));
         return;
       }
       const hit = MODIFIED_ENTER.exec(seq);
@@ -392,7 +473,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     return () => {
       process.stdin.off("data", onData);
     };
-  }, [editor, refresh, submit, scrollBy, onClick]);
+  }, [editor, refresh, submit, scrollBy, onPress, onDrag, onRelease]);
 
   // A pasted path to an image or document (a file dropped on the terminal) becomes its token.
   usePaste((text) => {
@@ -520,7 +601,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
           {/* one box per entry, so a click can be traced back to its entry */}
           {state.log.map((entry) => (
             <Box key={entry.id} flexDirection="column" flexShrink={0}>
-              <EntryView entry={entry} members={members} nameW={nameW} state={state} />
+              <EntryView entry={entry} members={members} nameW={nameW} state={state} width={columns} bodyTop={bodyTops[entry.id] ?? -1000} selection={selection} />
             </Box>
           ))}
         </Box>
