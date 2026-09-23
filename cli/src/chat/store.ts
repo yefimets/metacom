@@ -62,7 +62,7 @@ export type State = {
   log: Entry[];
   busy: string | null;
   attachments: Attachment[]; // files whose tokens may be in the draft
-  mouse: boolean; // clicking a name on the status line addresses it (off: the terminal keeps selection)
+  mouse: boolean; // off by default: the terminal keeps the mouse, so text selects as usual
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
@@ -81,7 +81,7 @@ export const COMMANDS = [
   { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
-  { name: "mouse", args: "[on|off]", help: "clicking names and message buttons, or the terminal's own selection" },
+  { name: "mouse", args: "[on|off]", help: "clicking names and message buttons (off by default, so text selects)" },
   { name: "clear", args: "", help: "clear the screen" },
   { name: "help", args: "", help: "keys and commands" },
   { name: "quit", args: "", help: "leave the chat" },
@@ -117,7 +117,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], mouse: process.env["MC_MOUSE"] === "1" };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -342,8 +342,8 @@ export class Store {
     if (!say) return;
     this.note(
       on
-        ? "mouse on · click names and the ↩ reply / ↪ forward row"
-        : "selecting · drag to select and copy as usual, then type anything to get clicking back",
+        ? "clicking on · names address, ↩ reply and ↪ forward act · ctrl+t to select text again"
+        : "clicking off · drag to select and copy as usual",
       "ok"
     );
   }
