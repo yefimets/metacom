@@ -41,7 +41,7 @@ export const segments = (room: string, members: Map<string, Member>, me: string)
 
 /// The line above the input: who is active on the left, who I am and where on the right.
 /// One Text per side so a narrow terminal truncates instead of squeezing the flexbox.
-export const StatusBar = ({ room, members, me, frame }: { room: string; members: Map<string, Member>; me: string; url?: string; frame: number }) => {
+export const StatusBar = ({ room, members, me, frame, mouse = false }: { room: string; members: Map<string, Member>; me: string; url?: string; frame: number; mouse?: boolean }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   const list = order(members, me);
@@ -66,6 +66,7 @@ export const StatusBar = ({ room, members, me, frame }: { room: string; members:
       </Box>
       <Box flexShrink={0} marginLeft={2}>
         <Text color={muted}>
+          {mouse && <Text color={theme.colors.accent}>click </Text>}
           {me} · <Text bold color={theme.colors.foreground}>{room}</Text>
         </Text>
       </Box>
