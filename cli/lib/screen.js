@@ -57,10 +57,13 @@ const BLOCKED = [
   /Allow (this )?command\?|Approve\?|approval required/i,
   /Quick safety check|trust this folder/i,
   /Select an option|Choose an option/i,
+  /Permission required|Allow always|Always allow/i,
+  // an agent that has not been logged in yet is waiting for a person, not for work
+  /Sign in with|Press enter to continue|paste your API key/i,
 ];
 
 // Rows that belong to a dialog rather than to normal output: options, pointers, box borders.
-const FURNITURE = /^\s*(❯|›|>|\d+\.|\(|[╭╰│─├┤┃┏┗]|esc\b|enter\b|\[|yes\b|no\b|tab\b|↑|↓)/i;
+const FURNITURE = /^\s*(❯|›|>|\d+\.|\(|[╭╰│─├┤┃┏┗]|esc\b|enter\b|\[|yes\b|no\b|tab\b|↑|↓|allow\b|deny\b|always\b|approve\b|reject\b|accept\b|cancel\b)/i;
 
 /// The question the agent is stuck on, or null. A question counts only while it is still the
 /// bottom of the screen: once ordinary output follows it, it was answered.

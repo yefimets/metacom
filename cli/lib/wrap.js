@@ -13,6 +13,10 @@ const TITLE = /\x1b\](?:0|2);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // OSC 9;4 progress state (ConEmu style): 0 clears it, anything else means the agent is busy.
 const PROGRESS = /\x1b\]9;4;(\d)/g;
 const QUIET_MS = 800;
+// How long the rendered screen must hold still before an agent that gives no other signal
+// counts as waiting, and how long a repaint burst may pause before it is worth comparing.
+const SETTLE_MS = 1200;
+const PAINT_GAP_MS = 80;
 const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
 const KEYS = {
@@ -115,6 +119,12 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   let status = 'starting';
   let reason = 'starting';
   let lastOutput = Date.now();
+  // A TUI that repaints itself (codex, opencode: spinner, elapsed timer) never stops sending
+  // bytes, so "output is flowing" cannot mean "busy". What the screen *shows* does stop
+  // changing when the agent is waiting for you: sample it in the gaps between repaint bursts.
+  let lastChange = Date.now();
+  let lastSample = Date.now();
+  let shot = '';
   let titleSeen = false;
   let progressSeen = false;
   let busySignal = false;
@@ -150,6 +160,16 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
       busySignal = match[1] !== '0';
     }
   });
+  const sample = () => {
+    const now = Date.now();
+    if (now - lastOutput < PAINT_GAP_MS) return now - lastSample > SETTLE_MS;
+    lastSample = now;
+    const next = screen.visible().join('\n');
+    if (next === shot) return false;
+    shot = next;
+    lastChange = now;
+    return true;
+  };
   const classify = () => {
     // Claude Code sets the terminal title once its prompt is up; until then it is loading, or
     // showing a trust/login dialog that the screen check reports as blocked.
@@ -162,11 +182,11 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     const question = blockedReason(screen.visible());
     if (question) return update('blocked', `screen: ${question}`);
     // Progress state is authoritative. A title alone may lack the spinner (terminals Claude
-    // Code does not recognise), so there a stream of output counts as busy too.
+    // Code does not recognise), so there a changing screen counts as busy too.
     const signalled = titleSeen;
-    const streaming = Date.now() - lastOutput < 1500;
-    const busy = progressSeen ? busySignal : busySignal || streaming;
-    if (busy) return update('working', progressSeen ? 'progress' : busySignal ? 'title' : 'output');
+    const painting = sample() || Date.now() - lastChange < SETTLE_MS;
+    const busy = progressSeen ? busySignal : busySignal || painting;
+    if (busy) return update('working', progressSeen ? 'progress' : busySignal ? 'title' : 'screen');
     return update('waiting', signalled ? 'idle' : 'quiet');
   };
   const ticker = setInterval(classify, 400);
@@ -243,7 +263,8 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     // An agent that signals idle through its title or progress state can be typed into almost at
     // once; only the output-activity heuristic needs a real quiet window.
     const quiet = titleSeen ? 250 : QUIET_MS;
-    if (Date.now() - lastOutput < quiet) {
+    if (!titleSeen) sample();
+    if (Date.now() - (titleSeen ? lastOutput : lastChange) < quiet) {
       setTimeout(flush, quiet);
       return;
     }
