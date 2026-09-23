@@ -30,8 +30,8 @@ export const Highlighted = ({ text, members, color }: { text: string; members: M
   return <Text wrap="wrap">{parts}</Text>;
 };
 
-export const Name = ({ name, kind, bold = true }: { name: string; kind?: string; bold?: boolean }) => (
-  <Text color={nameColor(name.trim())} bold={bold && kind !== "agent"} italic={kind === "agent"}>
+export const Name = ({ name, bold = true }: { name: string; kind?: string; bold?: boolean }) => (
+  <Text color={nameColor(name.trim())} bold={bold}>
     {name}
   </Text>
 );

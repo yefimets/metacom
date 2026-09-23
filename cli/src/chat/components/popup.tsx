@@ -12,7 +12,7 @@ export type PopupState = { kind: "mention" | "command" | null; items: PopupItem[
 
 export const POPUP_ROWS = 6;
 
-/// The list under the input for `@` and `/`, in the style of termcn's Select: a `›` cursor
+/// The list over the input for `@` and `/`, in the style of termcn's Select: a `›` cursor
 /// and the active row in the primary colour. Driven by the composer's keys, not by focus.
 export const Popup = ({ popup, room }: { popup: PopupState; room: number }) => {
   const theme = useTheme();
@@ -32,7 +32,7 @@ export const Popup = ({ popup, room }: { popup: PopupState; room: number }) => {
           const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.reason && state === "blocked" ? m.reason : ""].filter(Boolean).join("  ");
           return (
             <Text key={item.label} wrap="truncate-end">
-              <Text color={theme.colors.primary}>{mark}</Text> <Glyph member={m} animate={false} />{" "}
+              <Text color={theme.colors.primary}>{mark}</Text> <Glyph member={m} />{" "}
               <Text color={nameColor(m.name)} bold={active}>
                 {padToTerminalWidth("@" + item.label, nameW)}
               </Text>{" "}

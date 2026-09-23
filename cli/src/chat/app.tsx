@@ -1,13 +1,15 @@
 import fs from "node:fs";
-import { Box, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize } from "ink";
+import { Box, type DOMElement, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { ThemeProvider } from "@/providers/theme-provider";
+import { useAnimation } from "@/hooks/use-animation";
 import { terminalWidth } from "@/lib/terminal-text";
 import type { Theme } from "@/components/ui/types";
 import { Banner, Help, MemberRows, Rooms, Screen } from "@/chat/components/blocks";
 import { Composer, INPUT_ROWS, layout } from "@/chat/components/composer";
 import { Footer } from "@/chat/components/footer";
+import { SPIN_INTERVAL } from "@/chat/components/glyph";
 import { MessageLine } from "@/chat/components/message";
 import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
@@ -46,6 +48,18 @@ const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
 /// Everything written by the terminal rather than typed, so ink does not put it in the message.
 const REPORTS = /\u001b\[<\d+;\d+;\d+[Mm]/g;
+
+/// Where a laid-out node sits on the screen: yoga positions are relative to the parent, so
+/// add them up to the root. Zero-based.
+const screenAt = (node: DOMElement | null | undefined): { left: number; top: number } => {
+  let left = 0;
+  let top = 0;
+  for (let n = node; n?.yogaNode; n = n.parentNode) {
+    left += n.yogaNode.getComputedLeft();
+    top += n.yogaNode.getComputedTop();
+  }
+  return { left, top };
+};
 
 /// What the popup should show for the token at the cursor: members after `@`, commands
 /// after a leading `/`. The selection survives while the list stays the same.
@@ -169,20 +183,17 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const swallow = useRef("");
   const popupOpen = useRef(false);
   popupOpen.current = popup.kind !== null;
-  // Clicking a name on the status line puts @name into the input. The frame fills the screen,
-  // so the status line is simply that many rows up from the bottom.
+  // Clicking a name on the status line or in a message header puts @name into the input.
   const mouse = state.mouse;
-  const clickState = useRef<{ text: string; cursor: number; width: number; room: string; members: Map<string, Member>; me: string }>({ text: "", cursor: 0, width: 0, room: "", members: new Map(), me: "" });
-  clickState.current = { text: editor.text, cursor: editor.cursor, width: Math.max(30, columns - 1), room: state.room, members: state.members, me: state.me.name };
-  const rowsRef = useRef(0);
-  rowsRef.current = rows;
+  const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[] }>({ room: "", members: new Map(), me: "", log: [] });
+  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log };
 
   // MARK: the scrollback. The conversation lives in a window this draws, not in the terminal's
   // own scrollback, so the input stays pinned at the bottom while the wheel moves the history.
   const [offset, setOffset] = useState(0);
   const follow = useRef(true);
-  const contentRef = useRef(null);
-  const viewRef = useRef(null);
+  const contentRef = useRef<DOMElement>(null);
+  const viewRef = useRef<DOMElement>(null);
   const content = useBoxMetrics(contentRef);
   const view = useBoxMetrics(viewRef);
   const contentH = content.hasMeasured ? content.height : 0;
@@ -212,10 +223,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       stdout.write(ALT_OFF);
     };
   }, [stdout]);
-  const liveRef = useRef(null);
+  const liveRef = useRef<DOMElement>(null);
   const live = useBoxMetrics(liveRef);
-  const liveHeight = useRef(0);
-  liveHeight.current = live.hasMeasured ? live.height : 0;
   useEffect(() => {
     if (!mouse) return;
     stdout.write(MOUSE_ON);
@@ -224,22 +233,59 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     };
   }, [mouse, stdout]);
 
-  const onClick = useCallback(
-    (row: number, col: number) => {
-      const { room, members: list, me } = clickState.current;
-      const dbg = process.env["MC_CLICK_DEBUG"];
-      // 1-based rows from the terminal; a frame one row shorter is tolerated
-      const statusRows = [rowsRef.current - liveHeight.current + 1, rowsRef.current - liveHeight.current];
-      const hit = segments(room, list, me).find((s) => col - 1 >= s.start && col - 1 < s.end);
-      if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, rows: rowsRef.current, liveHeight: liveHeight.current, statusRows, hit }) + "\n");
-      if (!hit || !statusRows.includes(row)) return;
+  // Put @name at the start of the input, replacing whoever was addressed there.
+  const address = useCallback(
+    (name: string) => {
       editor.set(editor.text.replace(/^@\S*\s*/, ""));
       editor.home();
-      editor.insert(`@${hit.name} `);
+      editor.insert(`@${name} `);
       editor.end();
       refresh();
     },
     [editor, refresh]
+  );
+
+  // A click on a sender or recipient in a message header of the feed. Each log entry is one
+  // child of the content box, so the entry's header row is found from the laid-out tree.
+  const feedName = useCallback((row: number, col: number): string | undefined => {
+    const { log, me } = clickState.current;
+    const view = viewRef.current;
+    const content = contentRef.current;
+    if (!view?.yogaNode || !content) return;
+    const y = row - 1;
+    const x = col - 1;
+    const v = screenAt(view);
+    if (y < v.top || y >= v.top + view.yogaNode.getComputedHeight()) return;
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = log[i];
+      if (entry?.type !== "message" || entry.grouped || entry.msg.kind === "system") continue;
+      const line = child.nodeName === "ink-box" ? (child.childNodes[0] as DOMElement | undefined) : undefined;
+      if (!line) continue;
+      const at = screenAt(line);
+      if (at.top !== y) continue;
+      const from = entry.msg.from?.name ?? "";
+      const fromW = terminalWidth(from);
+      const c = x - at.left;
+      const name = c >= 0 && c < fromW ? from : entry.msg.to && c >= fromW + 3 && c < fromW + 3 + terminalWidth(entry.msg.to) ? entry.msg.to : undefined;
+      return name && name !== me ? name : undefined;
+    }
+    return;
+  }, []);
+
+  const onClick = useCallback(
+    (row: number, col: number) => {
+      const { room, members: list, me } = clickState.current;
+      const name = feedName(row, col);
+      if (name) return address(name);
+      const dbg = process.env["MC_CLICK_DEBUG"];
+      // the status line is the first row of the live area; the terminal counts rows from 1
+      const statusRow = screenAt(liveRef.current).top + 1;
+      const hit = segments(room, list, me).find((s) => col - 1 >= s.start && col - 1 < s.end);
+      if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, statusRow, hit }) + "\n");
+      if (!hit || row !== statusRow) return;
+      address(hit.name);
+    },
+    [address, feedName]
   );
 
   useEffect(() => {
@@ -387,24 +433,34 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   });
 
   const members = state.members;
+  // The one spinner tick, at the root: every frame re-renders the tree down to the composer,
+  // which keeps Ink placing the terminal cursor (it only does so on renders the composer joins).
+  const frame = useAnimation({ intervalMs: SPIN_INTERVAL, isActive: store.working });
   const nameW = useMemo(() => Math.min(14, Math.max(6, ...[...members.values()].map((m) => terminalWidth(m.name)))), [members]);
   const width = Math.max(30, columns - 1);
   const footerRoom = rows - 3 - Math.min(6, editor.lines.length) - 3;
   const pending = store.pending(editor.text);
   return (
-    <Box flexDirection="column" width={columns} height={rows}>
+    // One row short of the window: Ink 7.1 treats a frame that fills the screen as fullscreen,
+    // drops its final newline and then miscounts by a row, so the terminal cursor lands above the
+    // input and the bottom line is never cleared before a redraw.
+    <Box flexDirection="column" width={columns} height={rows - 1}>
       <Box ref={viewRef} flexGrow={1} flexShrink={1} overflowY="hidden" flexDirection="column">
         {/* short conversation: hug the bottom. long one: the offset scrolls it */}
         <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
+          {/* one box per entry, so a click can be traced back to its entry */}
           {state.log.map((entry) => (
-            <EntryView key={entry.id} entry={entry} members={members} nameW={nameW} state={state} />
+            <Box key={entry.id} flexDirection="column" flexShrink={0}>
+              <EntryView entry={entry} members={members} nameW={nameW} state={state} />
+            </Box>
           ))}
         </Box>
       </Box>
       <Box ref={liveRef} flexDirection="column" flexShrink={0}>
-        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} />
-        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} />
-        {popup.kind ? <Popup popup={popup} room={footerRoom} /> : <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} />}
+        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} />
+        {popup.kind && <Popup popup={popup} room={footerRoom} />}
+        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
+        <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} frame={frame} />
       </Box>
     </Box>
   );

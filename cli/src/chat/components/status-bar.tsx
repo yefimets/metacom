@@ -37,7 +37,7 @@ export const segments = (room: string, members: Map<string, Member>, me: string)
 
 /// The line above the input: room, every other member with a live glyph, who I am.
 /// One Text per side so a narrow terminal truncates instead of squeezing the flexbox.
-export const StatusBar = ({ room, members, me, url }: { room: string; members: Map<string, Member>; me: string; url: string }) => {
+export const StatusBar = ({ room, members, me, url, frame }: { room: string; members: Map<string, Member>; me: string; url: string; frame: number }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   const list = order(members, me);
@@ -53,7 +53,7 @@ export const StatusBar = ({ room, members, me, url }: { room: string; members: M
             return (
               <Text key={m.name}>
                 {i > 0 ? "   " : ""}
-                <Glyph member={m} /> <Text color={s === "offline" ? muted : nameColor(m.name)}>{m.name}</Text>
+                <Glyph member={m} frame={frame} /> <Text color={s === "offline" ? muted : nameColor(m.name)}>{m.name}</Text>
                 {s === "blocked" && <Text color={theme.colors.warning}> needs you</Text>}
                 {s === "working" && <Text color={muted}> working</Text>}
                 {s === "done" && <Text color={theme.colors.info}> done</Text>}
