@@ -41,7 +41,7 @@ export const MessageLine = ({ msg, grouped, members }: { msg: Message; grouped: 
               {" "}
               <Text color={control ? theme.colors.accent : msg.kind === "info" ? muted : theme.colors.foreground}>{control ? "⌘" : "→"}</Text>{" "}
               <Text color={nameColor(msg.to)} bold>
-                @{msg.to}
+                {msg.to}
               </Text>
             </Text>
           )}
