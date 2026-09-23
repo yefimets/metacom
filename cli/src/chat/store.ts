@@ -334,6 +334,20 @@ export class Store {
     this.note(msg, "error");
   }
 
+  /// Clicking on or off. `say` tells the reader what changed; the silent form is the one the
+  /// chat uses when it takes the mouse back after a keystroke.
+  setMouse(on: boolean, say: boolean): void {
+    if (this.state.mouse === on) return;
+    this.set({ mouse: on });
+    if (!say) return;
+    this.note(
+      on
+        ? "mouse on · click names and the ↩ reply / ↪ forward row"
+        : "selecting · drag to select and copy as usual, then type anything to get clicking back",
+      "ok"
+    );
+  }
+
   /// A short quote of a message, for a reply or a reaction to carry.
   quote(m: Message, max = 60): string {
     return this.snippet(m, max);
@@ -462,13 +476,7 @@ export class Store {
       }
       case "mouse": {
         const on = arg === "" ? !this.state.mouse : /^(on|yes|1|true)$/i.test(arg);
-        this.set({ mouse: on });
-        this.note(
-          on
-            ? "mouse on · click names and the ↩ reply / ↪ forward row · hold option (macOS) or shift to select text"
-            : "mouse off · selection works as usual again; ctrl+t brings the buttons back",
-          "ok"
-        );
+        this.setMouse(on, true);
         break;
       }
       case "clear":

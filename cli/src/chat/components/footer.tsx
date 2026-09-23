@@ -21,7 +21,7 @@ export const Footer = ({ text, busy, members, room, attachments = 0, frame }: { 
       </Text>
     );
   const files = attachments ? ` with ${attachments} file${attachments > 1 ? "s" : ""}` : "";
-  if (!text) return line(<Text color={muted}>@ to address an agent · / for commands · shift+enter new line · ctrl+v pastes an image · /help</Text>);
+  if (!text) return line(<Text color={muted}>@ to address an agent · / for commands · shift+enter new line · ctrl+t to select text · /help</Text>);
   // the first mention anywhere is who the message is for, so the hint follows it too
   const mentions = [...text.matchAll(/(^|\s)@([^\s]+)/g)].map((m) => m[2]!.replace(/[.,:;!?]+$/, ""));
   const head = mentions.find((n) => members.has(n)) ?? (text.startsWith("@") ? mentions[0] : undefined);
