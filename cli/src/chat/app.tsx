@@ -29,6 +29,12 @@ const match = (candidate: string, query: string): number => {
 
 const EMPTY_POPUP: PopupState = { kind: null, items: [], index: 0, query: "" };
 
+/// Enter with a modifier, as the terminals write it. ESC CR (option+enter, and what a terminal
+/// sends when cmd+enter is bound to an escape sequence) already reaches ink as meta+return;
+/// these are the forms it cannot represent — the kitty protocol's CSI u, whose super bit for
+/// cmd ink drops, and xterm's modifyOtherKeys — so the raw bytes are read before ink sees them.
+const MODIFIED_ENTER = /\u001b\[(?:13|10);\d+(?::\d+)?u|\u001b\[27;\d+;(?:13|10)~|\u001b\n/;
+
 /// What the popup should show for the token at the cursor: members after `@`, commands
 /// after a leading `/`. The selection survives while the list stays the same.
 const computePopup = (editor: Editor, members: Map<string, Member>, me: string, previous: PopupState): PopupState => {
@@ -40,7 +46,6 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
     kind = "mention";
     query = text.slice(1);
     const all = [...members.values()].filter((m) => m.name !== me);
-    if (start === 0 && all.some((m) => m.kind === "agent")) all.push({ name: "auto", kind: "route", room: "", status: "", connected: true, attention: false, reason: null });
     items = all
       .map((m) => ({ m, rank: match(m.name, query) }))
       .filter((x) => x.rank >= 0)
@@ -142,6 +147,37 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     });
   }, [editor, store, redraw, refresh]);
 
+  // cmd+enter (and every other modified enter) inserts a newline instead of sending. The raw
+  // listener runs before ink's, so `handled` tells the key handler below to let that Enter be.
+  const handledEnter = useRef(false);
+  // what ink will type out of a sequence it does not recognise (xterm's modifyOtherKeys), to
+  // be dropped instead of landing in the message
+  const swallow = useRef("");
+  const popupOpen = useRef(false);
+  popupOpen.current = popup.kind !== null;
+  useEffect(() => {
+    const onData = (data: Buffer | string) => {
+      const seq = typeof data === "string" ? data : data.toString("utf8");
+      const hit = MODIFIED_ENTER.exec(seq);
+      if (!hit) return;
+      handledEnter.current = true;
+      swallow.current = hit[0].replace(/\u001b/g, "");
+      // ink dispatches the same keypress synchronously right after this listener; the flag is
+      // consumed there. Clear it on the next tick so a later plain Enter still sends.
+      setTimeout(() => {
+        handledEnter.current = false;
+        swallow.current = "";
+      }, 0);
+      if (popupOpen.current) return;
+      editor.insert("\n");
+      refresh();
+    };
+    process.stdin.prependListener("data", onData);
+    return () => {
+      process.stdin.off("data", onData);
+    };
+  }, [editor, refresh]);
+
   // A pasted path to an image or document (a file dropped on the terminal) becomes its token.
   usePaste((text) => {
     const token = store.attachPasted(text);
@@ -185,7 +221,20 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       setPopup(EMPTY_POPUP);
       return refresh();
     }
-    if (input === "\n" || (key.return && (key.meta || key.shift))) {
+    if (key.return && handledEnter.current) {
+      handledEnter.current = false;
+      return; // the raw listener above already inserted the newline
+    }
+    // the tail of an unrecognised modified-enter sequence, arriving as ordinary text
+    if (swallow.current) {
+      if (key.escape) return;
+      if (input && swallow.current.startsWith(input)) {
+        swallow.current = swallow.current.slice(input.length);
+        return;
+      }
+      swallow.current = "";
+    }
+    if (input === "\n" || (key.return && (key.meta || key.shift || key.ctrl))) {
       editor.insert("\n");
       return refresh();
     }

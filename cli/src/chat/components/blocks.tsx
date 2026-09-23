@@ -27,7 +27,7 @@ export const Banner = ({ room, url, me, role }: { room: string; url: string; me:
         <Text color={muted}> ({role})</Text>
       </Text>
       <Text color={muted} wrap="wrap">
-        @Name to address an agent · @auto lets the hub pick · / for commands · /help for keys
+        @Name to address an agent · / for commands · /help for keys
       </Text>
     </Box>
   );
@@ -120,14 +120,13 @@ export const Help = () => {
       <H>messages</H>
       <Row k="text" v="post to the room; @Name inside is a mention" />
       <Row k="@Alex do the thing" v="typed into that agent when it is idle (a directed message for a human)" />
-      <Row k="@auto do the thing" v="the hub picks an agent by name, repo, capabilities, idleness" />
       <Row k="@Alex !cancel  !keys y  !type ok" v="control an agent that is blocked; acts at once" />
       <H>commands</H>
       {COMMANDS.map((c) => (
         <Row key={c.name} k={`/${c.name} ${c.args}`} v={c.help} />
       ))}
       <H>keys</H>
-      <Row k="enter" v="send · ctrl+j, alt+enter or a trailing \ for a new line" />
+      <Row k="enter" v="send · cmd+enter, alt+enter, ctrl+j or a trailing \ for a new line" />
       <Row k="@ and /" v="open a list; ↑↓ choose, tab or enter inserts, esc closes" />
       <Row k="↑ ↓" v="move between lines, then through history" />
       <Row k="ctrl+a ctrl+e ctrl+w ctrl+u ctrl+k" v="line start, line end, delete word, kill to start, kill to end" />
