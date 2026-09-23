@@ -30,11 +30,10 @@ const match = (candidate: string, query: string): number => {
 
 const EMPTY_POPUP: PopupState = { kind: null, items: [], index: 0, query: "" };
 
-/// Enter with a modifier, as the terminals write it. ESC CR (option+enter, and what a terminal
-/// sends when cmd+enter is bound to an escape sequence) already reaches ink as meta+return;
-/// these are the forms it cannot represent — the kitty protocol's CSI u, whose super bit for
-/// cmd ink drops, and xterm's modifyOtherKeys — so the raw bytes are read before ink sees them.
-const MODIFIED_ENTER = /\u001b\[(?:13|10);\d+(?::\d+)?u|\u001b\[27;\d+;(?:13|10)~|\u001b\n/;
+/// Enter with a modifier, in the forms that carry the modifier: the kitty protocol's CSI u and
+/// xterm's modifyOtherKeys, which ink does not recognise and would type out. The number is
+/// 1 + the modifier bits, shift being 1. Read from the raw bytes before ink sees them.
+const MODIFIED_ENTER = /\u001b\[(?:13|10);(\d+)(?::\d+)?u|\u001b\[27;(\d+);(?:13|10)~/;
 
 /// SGR mouse reporting (button press only) and the cursor-position report used to find where
 /// the status line is on screen. Both are written by the terminal, never typed by a person.
@@ -161,7 +160,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     });
   }, [editor, store, redraw, refresh]);
 
-  // cmd+enter (and every other modified enter) inserts a newline instead of sending. The raw
+  // shift+enter inserts a newline instead of sending; cmd+enter and the rest send. The raw
   // listener runs before ink's, so `handled` tells the key handler below to let that Enter be.
   const handledEnter = useRef(false);
   // what ink will type out of a sequence it does not recognise (xterm's modifyOtherKeys), to
@@ -268,6 +267,9 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       }
       const hit = MODIFIED_ENTER.exec(seq);
       if (!hit) return;
+      const shift = ((Number(hit[1] ?? hit[2]) - 1) & 1) === 1;
+      // ink reads the kitty form itself; with no shift it is an ordinary enter
+      if (!shift && hit[1]) return;
       handledEnter.current = true;
       swallow.current = hit[0].replace(/\u001b/g, "");
       // ink dispatches the same keypress synchronously right after this listener; the flag is
@@ -277,6 +279,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         swallow.current = "";
       }, 0);
       if (popupOpen.current) return;
+      if (!shift) return submit();
       editor.insert("\n");
       refresh();
     };
@@ -348,7 +351,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       }
       swallow.current = "";
     }
-    if (input === "\n" || (key.return && (key.meta || key.shift || key.ctrl))) {
+    // shift+enter; option+enter and ctrl+j too, for terminals that cannot report shift
+    if (input === "\n" || (key.return && (key.shift || key.meta))) {
       editor.insert("\n");
       return refresh();
     }
