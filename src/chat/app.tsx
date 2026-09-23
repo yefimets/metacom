@@ -411,13 +411,12 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return store.quit();
     }
     if (key.ctrl && input === "d" && !editor.text) return store.quit();
-    // One key hands the mouse back to the terminal so a drag selects text as usual. Typing
-    // anything afterwards takes it back, so you cannot be left wondering why clicks do nothing.
+    // The terminal keeps the mouse by default, so a drag selects text in the feed and in the
+    // input as usual. One key lends it to the chat when you want to click, and takes it back.
     if (key.ctrl && input === "t") {
       store.setMouse(!store.state.mouse, true);
       return;
     }
-    if (!store.state.mouse && !key.ctrl && !key.meta) store.setMouse(true, false);
     // cmd+v, once the terminal is told to send ^V for it, lands here too: an image on the
     // clipboard becomes an attachment, a path becomes one, anything else is pasted as text.
     if (key.ctrl && input === "v") {
@@ -530,7 +529,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} />
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
         <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
-        <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} frame={frame} />
+        <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} frame={frame} mouse={state.mouse} />
       </Box>
     </Box>
   );

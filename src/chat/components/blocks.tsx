@@ -132,8 +132,8 @@ export const Help = () => {
       <Row k="ctrl+a ctrl+e ctrl+w ctrl+u ctrl+k" v="line start, line end, delete word, kill to start, kill to end" />
       <Row k="alt+← alt+→  alt+b alt+f" v="word left, word right" />
       <Row k="esc esc" v="close the list; twice clears the input" />
-      <Row k="click" v="a name addresses it · ↩ reply and ↪ forward under a message act on it" />
-      <Row k="ctrl+t" v="hand the mouse back to the terminal to select and copy; typing anything takes it back" />
+      <Row k="ctrl+t then click" v="a name addresses it · ↩ reply and ↪ forward under a message act on it" />
+      <Row k="mouse" v="the terminal keeps it, so text selects and copies as usual · ctrl+t lends it to the chat for clicking, ctrl+t again gives it back (MC_MOUSE=1 starts with clicking on)" />
       <Row k="wheel · page up/down" v="scroll the conversation; the input stays at the bottom" />
       <Row k="cmd+v / ctrl+v" v="paste the clipboard: an image becomes [image 1.png], a file path the same, text as it is; delete the token to drop the file" />
       <Row k="ctrl+l" v="redraw" />
