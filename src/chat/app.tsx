@@ -610,7 +610,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
           {/* one box per entry, so a click can be traced back to its entry */}
           {state.log.map((entry) => (
-            <Box key={entry.id} flexDirection="column" flexShrink={0}>
+            // a message ends with a line of air, so the action row does not touch what follows
+            <Box key={entry.id} flexDirection="column" flexShrink={0} marginBottom={entry.type === "message" && entry.msg.kind !== "system" ? 1 : 0}>
               <EntryView entry={entry} members={members} nameW={nameW} state={state} width={columns} bodyTop={bodyTops[entry.id] ?? -1000} selection={selection} />
             </Box>
           ))}
