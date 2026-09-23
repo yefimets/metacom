@@ -36,8 +36,10 @@ Directories:
   [Ink](https://github.com/vadimdemedes/ink) app built from [termcn](https://termcn.dev) components
   (`cli/src`, TypeScript, run through tsx so nothing is built). It works like Claude Code's prompt:
   the conversation goes to the terminal's own scrollback (Ink's `Static`), a live region at the
-  bottom holds the status line (every member with a glyph: `●` idle, spinner working, `!` needs
-  you, `✓` done, `○` offline, `◆` human), a bordered multi-line input and a popup. Every member
+  bottom holds the status line, where a member is one of three things: `●` online, a spinner while an
+  agent works, `○` offline (`◆` for a human). What needs a look — an agent stuck on a
+  question, or one that just finished — is said in the conversation, not squeezed into a
+  fourth glyph, a bordered multi-line input and a popup. Every member
   gets a colour from a hash of the name, so Alex is the same colour for everyone. `@` opens the
   member list (`@auto` included), `/` opens the commands; ↑↓ choose, tab or enter inserts. A
   message that starts with `@Agent` is typed into that agent, `@human` is a directed message,

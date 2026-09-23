@@ -7,15 +7,9 @@ import { Glyph } from "@/chat/components/glyph";
 import { nameColor } from "@/chat/palette";
 import { type Member, stateOf } from "@/chat/store";
 
-const rank = (m: Member): number => {
-  const s = stateOf(m);
-  return s === "blocked" ? 0 : s === "done" ? 1 : m.connected ? 2 : 3;
-};
+const rank = (m: Member): number => (stateOf(m) === "working" ? 0 : 1);
 
-const suffixOf = (m: Member): string => {
-  const s = stateOf(m);
-  return s === "blocked" ? " needs you" : s === "working" ? " working" : s === "done" ? " done" : "";
-};
+const suffixOf = (m: Member): string => (stateOf(m) === "working" ? " working" : "");
 
 /// Who is on the line: everyone still connected, the ones needing a look first, then by when
 /// they were last active — so the names you are working with stay nearest the left edge.
@@ -56,9 +50,7 @@ export const StatusBar = ({ room, members, me, frame }: { room: string; members:
               <Text key={m.name}>
                 {i > 0 ? "   " : ""}
                 <Glyph member={m} frame={frame} /> <Text color={s === "offline" ? muted : nameColor(m.name)}>{m.name}</Text>
-                {s === "blocked" && <Text color={theme.colors.warning}> needs you</Text>}
                 {s === "working" && <Text color={muted}> working</Text>}
-                {s === "done" && <Text color={theme.colors.info}> done</Text>}
               </Text>
             );
           })}

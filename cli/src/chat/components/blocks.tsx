@@ -44,7 +44,7 @@ export const MemberRows = ({ members }: { members: Member[] }) => {
       {members.map((m) => {
         const state = stateOf(m);
         const accept = m.kind === "agent" && m.accept ? "accepts " + (Array.isArray(m.accept) ? m.accept.join(",") : m.accept) : "";
-        const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.caps?.length ? "[" + m.caps.join(",") + "]" : "", accept, m.reason && (state === "blocked" || state === "working") ? "(" + m.reason + ")" : ""].filter(Boolean).join("  ");
+        const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.caps?.length ? "[" + m.caps.join(",") + "]" : "", accept, m.reason && state !== "offline" ? "(" + m.reason + ")" : ""].filter(Boolean).join("  ");
         return (
           <Text key={m.name} wrap="truncate-end">
             <Glyph member={m} /> <Name name={padToTerminalWidth(m.name, nameW)} kind={m.kind} /> <Text color={muted}>{padToTerminalWidth(state, 8)}</Text>{" "}

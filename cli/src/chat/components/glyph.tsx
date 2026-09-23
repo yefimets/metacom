@@ -26,14 +26,6 @@ export const Glyph = ({ member, frame }: { member: Member; frame?: number }) => 
   if (member.kind === "human") return <Text color={member.connected ? theme.colors.success : theme.colors.mutedForeground}>{member.connected ? "◆" : "◇"}</Text>;
   if (member.kind === "route") return <Text color={theme.colors.accent}>◎</Text>;
   if (state === "working") return frame === undefined ? <Text color={theme.colors.success}>●</Text> : <Spin frame={frame} color={theme.colors.success} />;
-  if (state === "waiting") return <Text color={theme.colors.success}>●</Text>;
-  if (state === "blocked")
-    return (
-      <Text color={theme.colors.warning} bold>
-        !
-      </Text>
-    );
-  if (state === "done") return <Text color={theme.colors.info}>✓</Text>;
-  if (state === "starting") return <Text color={theme.colors.mutedForeground}>◌</Text>;
+  if (state === "online") return <Text color={theme.colors.success}>●</Text>;
   return <Text color={theme.colors.mutedForeground}>○</Text>;
 };
