@@ -365,7 +365,7 @@ export class Store {
   /// Pass a message on to someone else, under your own name, saying where it came from.
   async forward(msg: Message, to: string, note: string): Promise<void> {
     const from = msg.from?.name ?? "?";
-    const body = `[forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
+    const body = `↪ [forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
     try {
       const member = this.state.members.get(to);
       if (!member) return this.note(`nobody called ${to} is here`, "warn");
