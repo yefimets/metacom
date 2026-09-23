@@ -2,7 +2,8 @@ import { Box, Text } from "ink";
 import React from "react";
 
 import { useTheme } from "@/hooks/use-theme";
-import { terminalWidth } from "@/lib/terminal-text";
+import { splitGraphemes, terminalWidth } from "@/lib/terminal-text";
+import { type Selection, sliceOf, wrapLines } from "@/chat/selection";
 import { Highlighted, Name } from "@/chat/components/text";
 import { nameColor } from "@/chat/palette";
 import type { Member, Message } from "@/chat/store";
@@ -37,7 +38,22 @@ export const time = (ts: string): string => {
 /// A room message in two lines: who and when on top, the text below at full width. Consecutive
 /// messages from one sender drop the header, so a burst reads as one block. Directed messages
 /// carry an arrow to the recipient; control commands are set apart in the accent colour.
-export const MessageLine = ({ msg, grouped, members }: { msg: Message; grouped: boolean; members: Map<string, Member>; nameW?: number }) => {
+/// One line of a message body. A selected part is drawn inverse, which is how a terminal
+/// shows its own selection, so a drag looks the way it does everywhere else.
+const BodyLine = ({ text, row, left, selection, plain }: { text: string; row: number; left: number; selection: Selection | null; plain: boolean }) => {
+  const slice = sliceOf(selection, row, left, text);
+  if (!slice) return plain ? <Text>{text}</Text> : <Highlighted text={text} members={new Map()} />;
+  const g = splitGraphemes(text);
+  return (
+    <Text>
+      {g.slice(0, slice.from).join("")}
+      <Text inverse>{g.slice(slice.from, slice.to).join("")}</Text>
+      {g.slice(slice.to).join("")}
+    </Text>
+  );
+};
+
+export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, selection = null }: { msg: Message; grouped: boolean; members: Map<string, Member>; width?: number; top?: number; selection?: Selection | null; nameW?: number }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   if (msg.kind === "system") {
@@ -70,17 +86,18 @@ export const MessageLine = ({ msg, grouped, members }: { msg: Message; grouped: 
           <Text color={muted}>{"  " + time(msg.ts)}</Text>
         </Text>
       )}
-      <Box flexDirection="row">
-        {control ? (
-          <Text color={theme.colors.accent} wrap="wrap">
-            {msg.text}
-          </Text>
-        ) : (
-          <Highlighted text={msg.text} members={members} />
+      <Box flexDirection="column">
+        {wrapLines(msg.text, width).map((line, i) =>
+          control ? (
+            <Text key={i} color={theme.colors.accent}>
+              {line}
+            </Text>
+          ) : (
+            <BodyLine key={i} text={line} row={top + i} left={0} selection={selection} plain={false} />
+          )
         )}
         {files.length > 0 && (
           <Text color={muted} wrap="wrap">
-            {msg.text ? " " : ""}
             {files.map((m) => `[${m.name}]`).join(" ")}
           </Text>
         )}

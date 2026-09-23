@@ -7,6 +7,7 @@ const media = require("../../lib/media.js") as {
   attachment: (file: string) => Omit<Attachment, "token">;
   attachable: (text: string) => string | null;
   clipboardImage: () => string | null;
+  copyText: (text: string) => boolean;
   clipboardText: () => string;
   resolvePath: (raw: string) => string;
   upload: (o: { http: string; token: string | null; file: string }) => Promise<Media>;
@@ -62,7 +63,7 @@ export type State = {
   log: Entry[];
   busy: string | null;
   attachments: Attachment[]; // files whose tokens may be in the draft
-  mouse: boolean; // off by default: the terminal keeps the mouse, so text selects as usual
+  mouse: boolean; // the chat holds the mouse: it draws the selection and handles clicks
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
@@ -88,7 +89,7 @@ export const COMMANDS = [
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
   { name: "mouse", args: "[on|off]", help: "clicking names and message buttons (off by default, so text selects)" },
-  { name: "click", args: "", help: "same as ctrl+t: lend the mouse to the chat for one round of clicking" },
+  { name: "click", args: "", help: "same as ctrl+t: hand the mouse to the terminal, or take it back" },
   { name: "clear", args: "", help: "clear the screen" },
   { name: "help", args: "", help: "keys and commands" },
   { name: "quit", args: "", help: "leave the chat" },
@@ -124,7 +125,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], mouse: process.env["MC_MOUSE"] === "1" };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -361,6 +362,18 @@ export class Store {
     this.note(msg, "error");
   }
 
+  /// Put text on the clipboard, and say so. Where no clipboard tool exists — a server over
+  /// ssh — ask the terminal itself with OSC 52, which carries the text back to the machine
+  /// you are sitting at.
+  copy(text: string): void {
+    if (!media.copyText(text)) {
+      const payload = Buffer.from(text, "utf8").toString("base64");
+      process.stdout.write(`\u001b]52;c;${payload}\u0007`);
+    }
+    const lines = text.split("\n").length;
+    this.note(`copied ${lines} line${lines === 1 ? "" : "s"}`, "ok");
+  }
+
   /// Clicking on or off. `say` tells the reader what changed; the silent form is the one the
   /// chat uses when it takes the mouse back after a keystroke.
   setMouse(on: boolean, say: boolean): void {
@@ -369,8 +382,8 @@ export class Store {
     if (!say) return;
     this.note(
       on
-        ? "clicking on · names address, ↩ reply and ↪ forward act · ctrl+t to select text again"
-        : "clicking off · drag to select and copy as usual",
+        ? "mouse on · drag to select and copy, click names and the ↩ reply / ↪ forward row"
+        : "mouse off · the terminal handles the mouse again, as in any other program",
       "ok"
     );
   }

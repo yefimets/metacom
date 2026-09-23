@@ -24,7 +24,7 @@ export const Footer = ({ text, busy, members, room, attachments = 0, frame, mous
   if (!text)
     return line(
       <Text color={muted}>
-        @ to address an agent · / for commands · shift+enter new line · ctrl+t {mouse ? "to select text" : "to click"} · /help
+        @ to address an agent · / for commands · shift+enter new line · drag to copy · /help
       </Text>
     );
   // the first mention anywhere is who the message is for, so the hint follows it too
