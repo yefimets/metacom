@@ -126,6 +126,18 @@ Environment: `MC_URL`, `MC_TOKEN`, `MC_AGENT_TOKEN`, `MC_ROOM` override the conf
 `MC_DEBUG=1` writes a wrapper trace to `~/.local/share/metacom/wrap-<name>.log`; `MC_THEME`
 picks the chat theme.
 
+## Keeping it up to date
+
+```
+metacom update            # git checkout: fast-forward the branch, npm install when the lockfile moved
+                          # installed from npm: npm install -g @metacomdev/cli@latest
+metacom update --check    # only say what is waiting, and list the commits
+```
+
+It never forces anything: a checkout with uncommitted changes, with commits of its own, or on
+a detached HEAD is reported and left for you. Restart the chat and any wrapped agents
+afterwards — a running agent keeps the code it started with.
+
 ## Development
 
 ```bash
