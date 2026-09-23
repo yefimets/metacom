@@ -42,8 +42,9 @@ const MODIFIED_ENTER = /\u001b\[(?:13|10);(\d+)(?::\d+)?u|\u001b\[27;(\d+);(?:13
 const ALT_ON = "\u001b[?1049h\u001b[H";
 const ALT_OFF = "\u001b[?1049l";
 const WHEEL_LINES = 3;
-/// How long a + or − waits for another click before it is sent, so +++ arrives as one mark.
-const REACTION_WAIT = 900;
+/// How long a + or − waits for another click before it is sent, so a burst arrives as one
+/// mark. Long enough for a deliberate second click, short enough not to feel stuck.
+const REACTION_WAIT = 2500;
 const MOUSE_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
@@ -260,17 +261,14 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const sending = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const react = useCallback(
     (msg: Message, sign: "+" | "−") => {
+      // The mark stays on the message for the session, so clicking again later goes on from
+      // where it stopped: + then + is ++, whether the clicks are a second or a minute apart.
+      // Switching sign starts over.
       const current = marksRef.current[msg.id] ?? "";
       const mark = current.startsWith(sign) ? current + sign : sign;
       setMarks((m) => ({ ...m, [msg.id]: mark }));
       clearTimeout(sending.current[msg.id]);
-      sending.current[msg.id] = setTimeout(() => {
-        void store.react(msg, mark.replace(/−/g, "-"));
-        setMarks((m) => {
-          const { [msg.id]: gone, ...rest } = m;
-          return rest;
-        });
-      }, REACTION_WAIT);
+      sending.current[msg.id] = setTimeout(() => void store.react(msg, mark.replace(/−/g, "-")), REACTION_WAIT);
     },
     [store]
   );
