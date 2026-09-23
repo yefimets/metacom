@@ -90,7 +90,8 @@ export const Composer = ({ text, cursor, width, placeholder, tokens = [], origin
   // renderer in this component's commit, so setting it in an effect left the cursor one render
   // behind the text. Metrics are relative to the parent box; `origin` is where that parent sits
   // on the screen, which is Ink's cursor origin.
-  setCursorPosition(measured ? { x: origin.left + metrics.left + 4 + at.col, y: origin.top + metrics.top + 1 + cursorRow } : undefined);
+  // +1 for the box's top border, +1 more for the "↑ N more lines" row when the window scrolled
+  setCursorPosition(measured ? { x: origin.left + metrics.left + 4 + at.col, y: origin.top + metrics.top + 1 + (above > 0 ? 1 : 0) + cursorRow } : undefined);
   const muted = theme.colors.mutedForeground;
   return (
     <Box ref={ref} flexDirection="column" borderStyle={resolveBorderStyle(theme.border.style, unicode)} borderColor={theme.colors.border} paddingX={1} width={width}>

@@ -10,12 +10,12 @@ import { Banner, Help, MemberRows, Rooms, Screen } from "@/chat/components/block
 import { Composer, INPUT_ROWS, layout } from "@/chat/components/composer";
 import { Footer } from "@/chat/components/footer";
 import { SPIN_INTERVAL } from "@/chat/components/glyph";
-import { MessageLine } from "@/chat/components/message";
+import { MessageLine, actionAt, type Action } from "@/chat/components/message";
 import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
 import { Editor } from "@/chat/editor";
-import { COMMANDS, type Entry, type Member, type Store } from "@/chat/store";
+import { COMMANDS, type Entry, type Member, type Message, type Store } from "@/chat/store";
 import { themeByName, themeNames } from "@/chat/themes";
 
 /// Rank a candidate against what the user typed: prefix, then substring, then subsequence.
@@ -42,6 +42,8 @@ const MODIFIED_ENTER = /\u001b\[(?:13|10);(\d+)(?::\d+)?u|\u001b\[27;(\d+);(?:13
 const ALT_ON = "\u001b[?1049h\u001b[H";
 const ALT_OFF = "\u001b[?1049l";
 const WHEEL_LINES = 3;
+/// How long a + or − waits for another click before it is sent, so +++ arrives as one mark.
+const REACTION_WAIT = 900;
 const MOUSE_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
@@ -92,12 +94,12 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
   return { kind, items, index: same ? previous.index : 0, query };
 };
 
-const EntryView = ({ entry, members, nameW, state }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"] }) => {
+const EntryView = ({ entry, members, nameW, state, marks }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; marks: Record<string, string> }) => {
   switch (entry.type) {
     case "banner":
       return <Banner room={state.room} url={state.url} me={state.me.name} role={state.me.role} />;
     case "message":
-      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} />;
+      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} reaction={marks[entry.msg.id]} />;
     case "note":
       return <Note text={entry.text} tone={entry.tone} />;
     case "rule":
@@ -154,6 +156,19 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   }, [editor, store, redraw]);
 
   const submit = useCallback(() => {
+    // a message held for forwarding: the line names who it goes to, the rest rides along
+    const held = forwardRef.current;
+    if (held) {
+      const m = editor.text.trim().match(/^@?([^\s]+)\s*([\s\S]*)$/);
+      if (!m) return;
+      setForward(null);
+      forwardRef.current = null;
+      void store.forward(held, m[1]!, m[2]!.trim());
+      editor.set("");
+      setPopup(EMPTY_POPUP);
+      toBottom();
+      return redraw();
+    }
     // /attach <path> puts the file's token into the input instead of sending anything
     const attach = editor.text.match(/^\/attach\s+(.+)$/s);
     if (attach) {
@@ -184,6 +199,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   popupOpen.current = popup.kind !== null;
   // Clicking a name on the status line or in a message header puts @name into the input.
   const mouse = state.mouse;
+  const mouseRef = useRef(mouse);
+  mouseRef.current = mouse;
   const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[] }>({ room: "", members: new Map(), me: "", log: [] });
   clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log };
 
@@ -232,6 +249,32 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     };
   }, [mouse, stdout]);
 
+  // A message waiting for someone to forward it to: the next name picked is the recipient.
+  const [forward, setForward] = useState<Message | null>(null);
+  const forwardRef = useRef<Message | null>(null);
+  forwardRef.current = forward;
+  // Clicking + or − again before the previous one is sent makes it stronger: +, ++, +++.
+  const [marks, setMarks] = useState<Record<string, string>>({});
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
+  const sending = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const react = useCallback(
+    (msg: Message, sign: "+" | "−") => {
+      const current = marksRef.current[msg.id] ?? "";
+      const mark = current.startsWith(sign) ? current + sign : sign;
+      setMarks((m) => ({ ...m, [msg.id]: mark }));
+      clearTimeout(sending.current[msg.id]);
+      sending.current[msg.id] = setTimeout(() => {
+        void store.react(msg, mark.replace(/−/g, "-"));
+        setMarks((m) => {
+          const { [msg.id]: gone, ...rest } = m;
+          return rest;
+        });
+      }, REACTION_WAIT);
+    },
+    [store]
+  );
+
   // Put @name at the start of the input, replacing whoever was addressed there.
   const address = useCallback(
     (name: string) => {
@@ -243,6 +286,28 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     },
     [editor, refresh]
   );
+
+  /// The message whose action row was clicked, and which action. The entry's last child is
+  /// that row, so the laid-out tree answers both without measuring text.
+  const feedAction = useCallback((row: number, col: number): { msg: Message; action: Action } | undefined => {
+    const { log } = clickState.current;
+    const content = contentRef.current;
+    if (!content) return;
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = log[i];
+      if (entry?.type !== "message" || entry.msg.kind === "system") continue;
+      // each entry sits in its own wrapper box; the message box inside it ends with the actions
+      const inner = ((child as DOMElement).childNodes[0] as DOMElement | undefined) ?? (child as DOMElement);
+      const kids = inner.childNodes as unknown as DOMElement[];
+      const actions = kids[kids.length - 1];
+      if (!actions?.yogaNode) continue;
+      const at = screenAt(actions);
+      if (at.top !== row - 1) continue;
+      const action = actionAt(col - 1 - at.left);
+      if (action) return { msg: entry.msg, action };
+    }
+    return;
+  }, []);
 
   // A click on a sender or recipient in a message header of the feed. Each log entry is one
   // child of the content box, so the entry's header row is found from the laid-out tree.
@@ -274,6 +339,24 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const onClick = useCallback(
     (row: number, col: number) => {
       const { room, members: list, me } = clickState.current;
+      const act = feedAction(row, col);
+      if (act) {
+        const { msg, action } = act;
+        if (action === "+" || action === "−") return react(msg, action);
+        if (action === "reply") {
+          const author = msg.from?.name;
+          if (author && author !== me) address(author);
+          editor.end();
+          editor.insert(`${editor.text && !editor.text.endsWith(" ") ? " " : ""}re "${store.quote(msg)}": `);
+          return refresh();
+        }
+        // forward: hold the message, ask who for, and send it on when the name is picked
+        setForward(msg);
+        editor.set("@");
+        editor.end();
+        store.note(`forwarding ${msg.from?.name ?? "?"}'s message — pick who, then enter`, "ok");
+        return refresh();
+      }
       const name = feedName(row, col);
       if (name) return address(name);
       const dbg = process.env["MC_CLICK_DEBUG"];
@@ -284,7 +367,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (!hit || row !== statusRow) return;
       address(hit.name);
     },
-    [address, feedName]
+    [address, feedAction, feedName, react, editor, refresh, store]
   );
 
   useEffect(() => {
@@ -308,7 +391,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
           else if (button === 0 && !click) click = m;
         }
         if (wheel) scrollBy(wheel);
-        if (click) onClick(Number(click[3]), Number(click[2]));
+        // with clicking off, the reports are still dropped from the input but acted on by nobody
+        if (click && mouseRef.current) onClick(Number(click[3]), Number(click[2]));
         return;
       }
       const hit = MODIFIED_ENTER.exec(seq);
@@ -352,6 +436,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return store.quit();
     }
     if (key.ctrl && input === "d" && !editor.text) return store.quit();
+    // one key to hand the mouse back to the terminal for a moment, to select and copy
+    if (key.ctrl && input === "t") return void store.command("/mouse");
     // cmd+v, once the terminal is told to send ^V for it, lands here too: an image on the
     // clipboard becomes an attachment, a path becomes one, anything else is pasted as text.
     if (key.ctrl && input === "v") {
@@ -455,7 +541,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
           {/* one box per entry, so a click can be traced back to its entry */}
           {state.log.map((entry) => (
             <Box key={entry.id} flexDirection="column" flexShrink={0}>
-              <EntryView entry={entry} members={members} nameW={nameW} state={state} />
+              <EntryView entry={entry} members={members} nameW={nameW} state={state} marks={marks} />
             </Box>
           ))}
         </Box>
