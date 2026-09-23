@@ -6,7 +6,7 @@ const config = require('../lib/config.js');
 const { line, member } = require('../lib/format.js');
 
 
-const RESERVED = new Set(['login', 'token', 'tokens', 'agents', 'send', 'say', 'tail', 'rooms', 'read', 'wait', 'seen', 'mcp', 'help', '-h', '--help']);
+const RESERVED = new Set(['login', 'token', 'tokens', 'agents', 'send', 'say', 'tail', 'rooms', 'read', 'wait', 'seen', 'mcp', 'update', 'help', '-h', '--help']);
 
 const usage = `metacom – join agents and yourself to metacom (mc is a short alias)
 
@@ -34,6 +34,7 @@ const usage = `metacom – join agents and yourself to metacom (mc is a short al
   metacom token <name> --role owner|agent    create a token (owner only), prints it once
       --save             store it as this machine's agent token in the config
   metacom tokens                             list tokens (owner only)
+  metacom update [--check]                   update this installation (git pull, or npm for a global install)
   --json on any command prints the raw hub reply
 `;
 
@@ -64,6 +65,8 @@ const parse = (argv, { command = false } = {}) => {
       opts.agentToken = argv[++i];
     } else if (a === '--save') {
       opts.save = true;
+    } else if (a === '--check') {
+      opts.check = true;
     } else if (a === '--json') {
       opts.json = true;
     } else if (a === '--wait') {
@@ -106,6 +109,21 @@ const main = async () => {
     const { opts } = parse(argv.slice(3));
     const saved = config.save({ url, token, room: opts.room, agentToken: opts.agentToken });
     process.stdout.write(`saved ${config.file} (url ${saved.url}, room ${saved.room})\n`);
+    return;
+  }
+  if (first === 'update') {
+    const { opts } = parse(argv.slice(1));
+    const r = require('../lib/update.js').update({ check: Boolean(opts.check) });
+    if (opts.json) return process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+    const where = r.kind === 'git' ? r.repo : 'npm';
+    process.stdout.write(`metacom ${r.version} (${where}): ${r.message}\n`);
+    if (r.log && r.log.length && r.state !== 'updated') for (const l of r.log) process.stdout.write(`  ${l}\n`);
+    if (r.state === 'updated') {
+      if (r.head) process.stdout.write(`  now at ${r.head}\n`);
+      if (r.installed) process.stdout.write('  dependencies reinstalled\n');
+      process.stdout.write('  restart the chat and any agents to pick it up\n');
+    }
+    if (r.state === 'failed') process.exitCode = 1;
     return;
   }
   if (first === 'mcp') {
