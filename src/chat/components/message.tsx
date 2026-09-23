@@ -2,22 +2,30 @@ import { Box, Text } from "ink";
 import React from "react";
 
 import { useTheme } from "@/hooks/use-theme";
+import { terminalWidth } from "@/lib/terminal-text";
 import { Highlighted, Name } from "@/chat/components/text";
 import { nameColor } from "@/chat/palette";
 import type { Member, Message } from "@/chat/store";
 
-/// The row of actions under a message. Labels and gaps are fixed so a click can be turned
-/// back into one of them without measuring anything: see actionAt().
-export const ACTIONS = ["reply", "forward", "+", "−"] as const;
-export type Action = (typeof ACTIONS)[number];
+/// The row of actions under a message. Each one is a glyph and a word, and the gaps are
+/// fixed, so a click can be turned back into an action without measuring the screen.
+export const ACTIONS = [
+  { name: "reply", text: "↩ reply" },
+  { name: "forward", text: "↪ forward" },
+  { name: "+", text: "+" },
+  { name: "−", text: "−" },
+] as const;
+export type Action = (typeof ACTIONS)[number]["name"];
 const GAP = 2;
+export const actionsText = ACTIONS.map((a) => a.text).join(" ".repeat(GAP));
 
 /// Which action a click at column `c` (0-based, relative to the row's left edge) landed on.
 export const actionAt = (c: number): Action | undefined => {
   let col = 0;
-  for (const label of ACTIONS) {
-    if (c >= col && c < col + label.length) return label;
-    col += label.length + GAP;
+  for (const { name, text } of ACTIONS) {
+    const w = terminalWidth(text);
+    if (c >= col && c < col + w) return name;
+    col += w + GAP;
   }
   return undefined;
 };
@@ -81,7 +89,7 @@ export const MessageLine = ({ msg, grouped, members, reaction }: { msg: Message;
       </Box>
       <Box>
         <Text color={theme.colors.mutedForeground}>
-          {ACTIONS.join(" ".repeat(GAP))}
+          {actionsText}
           {reaction ? <Text color={theme.colors.accent}>{"   " + reaction}</Text> : null}
         </Text>
       </Box>
