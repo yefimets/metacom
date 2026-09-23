@@ -42,9 +42,6 @@ const MODIFIED_ENTER = /\u001b\[(?:13|10);(\d+)(?::\d+)?u|\u001b\[27;(\d+);(?:13
 const ALT_ON = "\u001b[?1049h\u001b[H";
 const ALT_OFF = "\u001b[?1049l";
 const WHEEL_LINES = 3;
-/// How long a + or − waits for another click before it is sent, so a burst arrives as one
-/// mark. Long enough for a deliberate second click, short enough not to feel stuck.
-const REACTION_WAIT = 2500;
 const MOUSE_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
@@ -95,12 +92,12 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
   return { kind, items, index: same ? previous.index : 0, query };
 };
 
-const EntryView = ({ entry, members, nameW, state, marks }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; marks: Record<string, string> }) => {
+const EntryView = ({ entry, members, nameW, state }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"] }) => {
   switch (entry.type) {
     case "banner":
       return <Banner room={state.room} url={state.url} me={state.me.name} role={state.me.role} />;
     case "message":
-      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} reaction={marks[entry.msg.id]} />;
+      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} />;
     case "note":
       return <Note text={entry.text} tone={entry.tone} />;
     case "rule":
@@ -254,25 +251,6 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const [forward, setForward] = useState<Message | null>(null);
   const forwardRef = useRef<Message | null>(null);
   forwardRef.current = forward;
-  // Clicking + or − again before the previous one is sent makes it stronger: +, ++, +++.
-  const [marks, setMarks] = useState<Record<string, string>>({});
-  const marksRef = useRef(marks);
-  marksRef.current = marks;
-  const sending = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const react = useCallback(
-    (msg: Message, sign: "+" | "−") => {
-      // The mark stays on the message for the session, so clicking again later goes on from
-      // where it stopped: + then + is ++, whether the clicks are a second or a minute apart.
-      // Switching sign starts over.
-      const current = marksRef.current[msg.id] ?? "";
-      const mark = current.startsWith(sign) ? current + sign : sign;
-      setMarks((m) => ({ ...m, [msg.id]: mark }));
-      clearTimeout(sending.current[msg.id]);
-      sending.current[msg.id] = setTimeout(() => void store.react(msg, mark.replace(/−/g, "-")), REACTION_WAIT);
-    },
-    [store]
-  );
-
   // Put @name at the start of the input, replacing whoever was addressed there.
   const address = useCallback(
     (name: string) => {
@@ -340,7 +318,6 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       const act = feedAction(row, col);
       if (act) {
         const { msg, action } = act;
-        if (action === "+" || action === "−") return react(msg, action);
         if (action === "reply") {
           const author = msg.from?.name;
           if (author && author !== me) address(author);
@@ -365,7 +342,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (!hit || row !== statusRow) return;
       address(hit.name);
     },
-    [address, feedAction, feedName, react, editor, refresh, store]
+    [address, feedAction, feedName, editor, refresh, store]
   );
 
   useEffect(() => {
@@ -539,7 +516,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
           {/* one box per entry, so a click can be traced back to its entry */}
           {state.log.map((entry) => (
             <Box key={entry.id} flexDirection="column" flexShrink={0}>
-              <EntryView entry={entry} members={members} nameW={nameW} state={state} marks={marks} />
+              <EntryView entry={entry} members={members} nameW={nameW} state={state} />
             </Box>
           ))}
         </Box>

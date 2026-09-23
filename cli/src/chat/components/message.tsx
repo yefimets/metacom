@@ -12,8 +12,6 @@ import type { Member, Message } from "@/chat/store";
 export const ACTIONS = [
   { name: "reply", text: "↩ reply" },
   { name: "forward", text: "↪ forward" },
-  { name: "+", text: "+" },
-  { name: "−", text: "−" },
 ] as const;
 export type Action = (typeof ACTIONS)[number]["name"];
 const GAP = 2;
@@ -39,7 +37,7 @@ export const time = (ts: string): string => {
 /// A room message in two lines: who and when on top, the text below at full width. Consecutive
 /// messages from one sender drop the header, so a burst reads as one block. Directed messages
 /// carry an arrow to the recipient; control commands are set apart in the accent colour.
-export const MessageLine = ({ msg, grouped, members, reaction }: { msg: Message; grouped: boolean; members: Map<string, Member>; reaction?: string; nameW?: number }) => {
+export const MessageLine = ({ msg, grouped, members }: { msg: Message; grouped: boolean; members: Map<string, Member>; nameW?: number }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   if (msg.kind === "system") {
@@ -88,10 +86,7 @@ export const MessageLine = ({ msg, grouped, members, reaction }: { msg: Message;
         )}
       </Box>
       <Box>
-        <Text color={theme.colors.mutedForeground}>
-          {actionsText}
-          {reaction ? <Text color={theme.colors.accent}>{"   " + reaction}</Text> : null}
-        </Text>
+        <Text color={theme.colors.mutedForeground}>{actionsText}</Text>
       </Box>
     </Box>
   );
