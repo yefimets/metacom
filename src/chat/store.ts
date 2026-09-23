@@ -62,6 +62,8 @@ export type State = {
   members: Map<string, Member>;
   log: Entry[];
   busy: string | null;
+  status: { text: string; tone: Tone } | null; // the line under the input: what just happened,
+  // or what the chat is waiting for. Short-lived, and never worth a place in the conversation.
   attachments: Attachment[]; // files whose tokens may be in the draft
   mouse: boolean; // the chat holds the mouse: it draws the selection and handles clicks
 };
@@ -125,7 +127,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, status: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -152,6 +154,16 @@ export class Store {
 
   setBusy(busy: string | null): void {
     this.set({ busy });
+  }
+
+  private statusTimer: ReturnType<typeof setTimeout> | null = null;
+  /// Say something under the input. `ms` clears it again; without it the line stays until
+  /// something else replaces it, which is what a mode like forwarding wants.
+  setStatus(text: string | null, tone: Tone = "ok", ms = 0): void {
+    if (this.statusTimer) clearTimeout(this.statusTimer);
+    this.statusTimer = null;
+    this.set({ status: text ? { text, tone } : null });
+    if (text && ms) this.statusTimer = setTimeout(() => this.set({ status: null }), ms);
   }
 
   async start(): Promise<void> {
@@ -371,7 +383,7 @@ export class Store {
       process.stdout.write(`\u001b]52;c;${payload}\u0007`);
     }
     const lines = text.split("\n").length;
-    this.note(`copied ${lines} line${lines === 1 ? "" : "s"}`, "ok");
+    this.setStatus(`copied ${lines} line${lines === 1 ? "" : "s"}`, "ok", 2500);
   }
 
   /// Clicking on or off. `say` tells the reader what changed; the silent form is the one the
@@ -404,10 +416,10 @@ export class Store {
     const body = `↪ [forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
     try {
       const member = this.state.members.get(to);
-      if (!member) return this.note(`nobody called ${to} is here`, "warn");
+      if (!member) return this.setStatus(`nobody called ${to} is here`, "warn", 2500);
       const kind = member.kind === "agent" ? "command" : "info";
       const r = await this.mc!.api.agents.send({ to, text: body, kind, media: msg.media });
-      this.note(r.delivered ? `forwarded to ${to}` : `${to} is offline, queued`, "ok");
+      this.setStatus(r.delivered ? `forwarded to ${to}` : `${to} is offline, queued`, "ok", 2500);
     } catch (error) {
       this.failure(error);
     }
