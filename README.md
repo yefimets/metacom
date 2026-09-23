@@ -79,6 +79,11 @@ for themselves — bind it to the escape sequence `\e\r` (ESC then carriage retu
 Whatever form arrives — ESC CR, kitty's `CSI 13;9u` (whose super bit most readers drop), or
 xterm's `modifyOtherKeys` — the chat treats it as a new line.
 
+**Scrolling.** The conversation is a window the chat draws, not the terminal's scrollback, so
+the input stays at the bottom: the wheel and page up/down move the history, a message arriving
+while you are reading back does not yank the view, and sending returns to the newest line. The
+chat runs on the alternate screen, so leaving it gives your terminal back as it was.
+
 **Clicking.** A click on a name in the status line puts `@name ` at the front of the input,
 so addressing an agent is one click. This needs mouse reporting, which takes text selection
 away from the terminal while the chat runs — hold option (macOS) or shift to select anyway,
