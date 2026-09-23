@@ -80,12 +80,14 @@ chat runs on the alternate screen, so leaving it gives your terminal back as it 
 at the front of the input. Under every message sits a muted row: **↩ reply** addresses its
 author and quotes the line it answers, **↪ forward** asks who for and then sends it on under
 your own name marked `↪ [forwarded from X]`, so an agent reads where it came from.
-While the chat listens for clicks the terminal cannot paint a selection, so `ctrl+t` hands
-the mouse back for as long as you need — drag, copy — and the next keystroke takes it again.
-`MC_MOUSE=0` starts with clicking off for good, and `/mouse on|off` sets it by hand. This needs mouse reporting, which takes text selection
-away from the terminal while the chat runs — hold option (macOS) or shift to select anyway,
-or turn it off with `/mouse off` (`MC_MOUSE=0` to start that way). Clicks anywhere else are
-ignored, and nothing the terminal reports ever lands in the message.
+**Selecting.** A terminal hands the mouse to one owner at a time, so a program that wants
+clicks has to draw the selection itself. The chat does: drag over the conversation and the
+text lights up, let go and it is on the clipboard — `pbcopy`, `wl-copy` or `xclip` locally,
+and OSC 52 when there is none, so a selection made in a chat running over ssh lands on the
+machine in front of you. A press and release in the same place is a click, so names and the
+action row still work. `ctrl+t` (or `/mouse`) hands the mouse back to the terminal if you
+would rather use its own selection, and the status line shows `click` while the chat holds
+it. Only what is on screen can be selected: scroll a line into view first.
 
 **Pasting.** `ctrl+v` pastes whatever is on the clipboard: an image is attached as
 `[image 1.png]` and uploaded with the message, a file path becomes an attachment the same
