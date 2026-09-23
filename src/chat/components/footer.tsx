@@ -22,9 +22,11 @@ export const Footer = ({ text, busy, members, room, attachments = 0 }: { text: s
     );
   const files = attachments ? ` with ${attachments} file${attachments > 1 ? "s" : ""}` : "";
   if (!text) return line(<Text color={muted}>@ to address an agent · / for commands · cmd+enter new line · ctrl+v pastes an image · /help</Text>);
-  const head = text.match(/^@([^\s]+)/);
+  // the first mention anywhere is who the message is for, so the hint follows it too
+  const mentions = [...text.matchAll(/(^|\s)@([^\s]+)/g)].map((m) => m[2]!.replace(/[.,:;!?]+$/, ""));
+  const head = mentions.find((n) => members.has(n)) ?? (text.startsWith("@") ? mentions[0] : undefined);
   if (head) {
-    const name = head[1]!;
+    const name = head;
     const m = members.get(name);
     if (!m)
       return line(

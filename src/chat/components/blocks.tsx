@@ -119,7 +119,7 @@ export const Help = () => {
     <Box flexDirection="column" paddingLeft={2}>
       <H>messages</H>
       <Row k="text" v="post to the room; @Name inside is a mention" />
-      <Row k="@Alex do the thing" v="typed into that agent when it is idle (a directed message for a human)" />
+      <Row k="@Alex do the thing" v="typed into that agent when it is idle · a mention later in the sentence addresses it too" />
       <Row k="@Alex !cancel  !keys y  !type ok" v="control an agent that is blocked; acts at once" />
       <H>commands</H>
       {COMMANDS.map((c) => (

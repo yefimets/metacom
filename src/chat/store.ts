@@ -29,6 +29,7 @@ export type Member = {
   connected: boolean;
   attention: boolean;
   reason: string | null;
+  lastSeen?: string; // when the server last heard from it: the status line puts the freshest first
 };
 export type Message = {
   id: string;
@@ -338,7 +339,7 @@ export class Store {
     this.setBusy("sending…");
     try {
       if (t.startsWith("/")) await this.command(t);
-      else if (t.startsWith("@")) await this.directed(t);
+      else if (this.mentioned(t)) await this.directed(t);
       else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel", "warn");
       else await this.mc!.api.room.say({ room: this.state.room, text: await this.sealed(t), media: await this.uploadAll(t) });
       this.prune();
@@ -359,10 +360,21 @@ export class Store {
     this.note(msg, "error");
   }
 
+  /// The member a message is for: the first @name in it, wherever it stands. A leading
+  /// mention is the address and comes off the text; one in the middle of a sentence is part
+  /// of what you wrote, so the whole line travels.
+  private mentioned(t: string): string | null {
+    for (const m of t.matchAll(/(^|\s)@([^\s]+)/g)) {
+      const name = m[2]!.replace(/[.,:;!?]+$/, "");
+      if (this.state.members.has(name)) return name;
+    }
+    return t.startsWith("@") ? t.slice(1).split(/\s/)[0]! : null;
+  }
+
   private async directed(t: string): Promise<void> {
-    const m = t.match(/^@([^\s]+)\s*([\s\S]*)$/)!;
-    const to = m[1]!;
-    const body = m[2]!.trim();
+    const to = this.mentioned(t)!;
+    const lead = t.match(new RegExp(`^@${to.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\s*([\\s\\S]*)$`));
+    const body = lead ? lead[1]!.trim() : t;
     const member = this.state.members.get(to);
     if (!member) {
       await this.mc!.api.room.say({ room: this.state.room, text: await this.sealed(t) });

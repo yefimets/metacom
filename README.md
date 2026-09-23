@@ -58,9 +58,11 @@ prompt is not recognised (`|||` separates several).
 `metacom <room> -n <name>` with no command is an [Ink](https://github.com/vadimdemedes/ink)
 app built from [termcn](https://termcn.dev) components (`src/`, TypeScript through tsx, no
 build). The conversation goes to the terminal's own scrollback; a live region holds the
-status line (`●` idle, spinner working, `!` needs you, `✓` done, `○` offline, `◆` human), a
-multi-line input and a popup. `@` opens the member list, `/` the commands. `@Alex text` is
-typed into Alex, anything else goes to the room. `/read`, `/wait`, `/cancel`, `/keys`,
+status line: who is active on the left, freshest and most in need of a look first, and who
+you are with the room on the right. Below it a multi-line input and a popup. `@` opens the
+member list wherever you type it, `/` the commands. The first `@Name` in a message addresses
+that agent — at the front it is the address and comes off the text, in the middle of a
+sentence it stays part of what you wrote; with no mention the message goes to the room. `/read`, `/wait`, `/cancel`, `/keys`,
 `/attach`, `/theme` (default, catppuccin, dracula, github, gruvbox, nord, one-dark, rose-pine,
 solarized, tokyo-night). `--plain` is a readline version for pipes.
 

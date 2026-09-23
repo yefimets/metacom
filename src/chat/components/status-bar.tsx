@@ -17,13 +17,17 @@ const suffixOf = (m: Member): string => {
   return s === "blocked" ? " needs you" : s === "working" ? " working" : s === "done" ? " done" : "";
 };
 
+/// Who is on the line: everyone still connected, the ones needing a look first, then by when
+/// they were last active — so the names you are working with stay nearest the left edge.
 export const order = (members: Map<string, Member>, me: string): Member[] =>
-  [...members.values()].filter((m) => m.name !== me).sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  [...members.values()]
+    .filter((m) => m.name !== me && m.connected)
+    .sort((a, b) => rank(a) - rank(b) || String(b.lastSeen ?? "").localeCompare(String(a.lastSeen ?? "")) || a.name.localeCompare(b.name));
 
 /// Where each name sits on the status line, in terminal columns (0-based), so a mouse click
 /// can be turned back into a name. Must follow the render below exactly.
 export const segments = (room: string, members: Map<string, Member>, me: string): { name: string; start: number; end: number }[] => {
-  let col = 1 + terminalWidth(room) + 3; // paddingX={1}, the room, three spaces
+  let col = 1; // paddingX={1}: the names start at the left edge
   const out: { name: string; start: number; end: number }[] = [];
   order(members, me).forEach((m, i) => {
     if (i > 0) col += 3;
@@ -35,9 +39,9 @@ export const segments = (room: string, members: Map<string, Member>, me: string)
   return out;
 };
 
-/// The line above the input: room, every other member with a live glyph, who I am.
+/// The line above the input: who is active on the left, who I am and where on the right.
 /// One Text per side so a narrow terminal truncates instead of squeezing the flexbox.
-export const StatusBar = ({ room, members, me, url }: { room: string; members: Map<string, Member>; me: string; url: string }) => {
+export const StatusBar = ({ room, members, me }: { room: string; members: Map<string, Member>; me: string; url?: string }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   const list = order(members, me);
@@ -45,8 +49,6 @@ export const StatusBar = ({ room, members, me, url }: { room: string; members: M
     <Box flexDirection="row" paddingX={1} justifyContent="space-between">
       <Box flexShrink={1}>
         <Text wrap="truncate-end">
-          <Text bold>{room}</Text>
-          {"   "}
           {list.length === 0 && <Text color={muted}>nobody else here</Text>}
           {list.map((m, i) => {
             const s = stateOf(m);
@@ -64,7 +66,7 @@ export const StatusBar = ({ room, members, me, url }: { room: string; members: M
       </Box>
       <Box flexShrink={0} marginLeft={2}>
         <Text color={muted}>
-          {me} · {url.replace(/^wss?:\/\//, "").replace(/\/$/, "")}
+          {me} · <Text bold color={theme.colors.foreground}>{room}</Text>
         </Text>
       </Box>
     </Box>
