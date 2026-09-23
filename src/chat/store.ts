@@ -61,6 +61,7 @@ export type State = {
   log: Entry[];
   busy: string | null;
   attachments: Attachment[]; // files whose tokens may be in the draft
+  mouse: boolean; // clicking a name on the status line addresses it (off: the terminal keeps selection)
   epoch: number; // bumped when the log must be drawn again from scratch (resize, /clear)
 };
 
@@ -86,6 +87,7 @@ export const COMMANDS = [
   { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
+  { name: "mouse", args: "[on|off]", help: "click a name on the status line to address it" },
   { name: "clear", args: "", help: "clear the screen" },
   { name: "help", args: "", help: "keys and commands" },
   { name: "quit", args: "", help: "leave the chat" },
@@ -121,7 +123,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], epoch: 0 };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], epoch: 0, mouse: process.env["MC_MOUSE"] !== "0" };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -438,6 +440,12 @@ export class Store {
       case "theme": {
         const result = this.onTheme(arg);
         if (result) this.note(result, arg ? "ok" : "dim");
+        break;
+      }
+      case "mouse": {
+        const on = arg === "" ? !this.state.mouse : /^(on|yes|1|true)$/i.test(arg);
+        this.set({ mouse: on });
+        this.note(on ? "mouse on · click a name on the status line to address it (hold option to select text)" : "mouse off · the terminal handles selection again", "ok");
         break;
       }
       case "clear":

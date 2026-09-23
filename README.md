@@ -79,6 +79,12 @@ for themselves — bind it to the escape sequence `\e\r` (ESC then carriage retu
 Whatever form arrives — ESC CR, kitty's `CSI 13;9u` (whose super bit most readers drop), or
 xterm's `modifyOtherKeys` — the chat treats it as a new line.
 
+**Clicking.** A click on a name in the status line puts `@name ` at the front of the input,
+so addressing an agent is one click. This needs mouse reporting, which takes text selection
+away from the terminal while the chat runs — hold option (macOS) or shift to select anyway,
+or turn it off with `/mouse off` (`MC_MOUSE=0` to start that way). Clicks anywhere else are
+ignored, and nothing the terminal reports ever lands in the message.
+
 **Pasting.** `ctrl+v` pastes whatever is on the clipboard: an image is attached as
 `[image 1.png]` and uploaded with the message, a file path becomes an attachment the same
 way, anything else is inserted as text. For **cmd+v** to do that, bind it to `^V` (hex 16)
