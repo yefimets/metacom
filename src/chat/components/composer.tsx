@@ -1,5 +1,5 @@
 import { Box, Text, useBoxMetrics, useCursor } from "ink";
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 
 import { useTheme } from "@/hooks/use-theme";
 import { useUnicode } from "@/hooks/use-unicode";
@@ -71,7 +71,7 @@ export const layout = (text: string, cursor: number, width: number): Layout => {
 /// The input box: a rounded frame in the theme's border colour, a `❯` prompt, character-wrapped
 /// lines, a window of INPUT_ROWS rows that follows the cursor, and the real terminal cursor.
 /// `tokens` are the attachment placeholders in the text, drawn in the accent colour.
-export const Composer = ({ text, cursor, width, placeholder, tokens = [] }: { text: string; cursor: number; width: number; placeholder: string; tokens?: string[] }) => {
+export const Composer = ({ text, cursor, width, placeholder, tokens = [], origin }: { text: string; cursor: number; width: number; placeholder: string; tokens?: string[]; origin?: { left: number; top: number } }) => {
   const theme = useTheme();
   const unicode = useUnicode();
   const ref = useRef(null);
@@ -85,16 +85,13 @@ export const Composer = ({ text, cursor, width, placeholder, tokens = [] }: { te
   const above = top;
   const below = rows.length - top - shown.length;
   const cursorRow = at.row - top;
-  const measured = metrics.hasMeasured;
-  useEffect(() => {
-    if (!measured) {
-      setCursorPosition(undefined);
-      return;
-    }
-    // metrics are relative to the root box, which is also Ink's cursor origin
-    setCursorPosition({ x: metrics.left + 4 + at.col, y: metrics.top + 1 + cursorRow });
-    return () => setCursorPosition(undefined);
-  }, [measured, metrics.left, metrics.top, at.col, cursorRow, setCursorPosition]);
+  const measured = metrics.hasMeasured && origin !== undefined;
+  // Set during render, as Ink's docs do: useCursor only stores the value and hands it to the
+  // renderer in this component's commit, so setting it in an effect left the cursor one render
+  // behind the text. Metrics are relative to the parent box; `origin` is where that parent sits
+  // on the screen, which is Ink's cursor origin.
+  // +1 for the box's top border, +1 more for the "↑ N more lines" row when the window scrolled
+  setCursorPosition(measured ? { x: origin.left + metrics.left + 4 + at.col, y: origin.top + metrics.top + 1 + (above > 0 ? 1 : 0) + cursorRow } : undefined);
   const muted = theme.colors.mutedForeground;
   return (
     <Box ref={ref} flexDirection="column" borderStyle={resolveBorderStyle(theme.border.style, unicode)} borderColor={theme.colors.border} paddingX={1} width={width}>

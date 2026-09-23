@@ -6,6 +6,22 @@ import { Highlighted, Name } from "@/chat/components/text";
 import { nameColor } from "@/chat/palette";
 import type { Member, Message } from "@/chat/store";
 
+/// The row of actions under a message. Labels and gaps are fixed so a click can be turned
+/// back into one of them without measuring anything: see actionAt().
+export const ACTIONS = ["reply", "forward", "+", "−"] as const;
+export type Action = (typeof ACTIONS)[number];
+const GAP = 2;
+
+/// Which action a click at column `c` (0-based, relative to the row's left edge) landed on.
+export const actionAt = (c: number): Action | undefined => {
+  let col = 0;
+  for (const label of ACTIONS) {
+    if (c >= col && c < col + label.length) return label;
+    col += label.length + GAP;
+  }
+  return undefined;
+};
+
 export const time = (ts: string): string => {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
@@ -15,7 +31,7 @@ export const time = (ts: string): string => {
 /// A room message in two lines: who and when on top, the text below at full width. Consecutive
 /// messages from one sender drop the header, so a burst reads as one block. Directed messages
 /// carry an arrow to the recipient; control commands are set apart in the accent colour.
-export const MessageLine = ({ msg, grouped, members }: { msg: Message; grouped: boolean; members: Map<string, Member>; nameW?: number }) => {
+export const MessageLine = ({ msg, grouped, members, reaction }: { msg: Message; grouped: boolean; members: Map<string, Member>; reaction?: string; nameW?: number }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   if (msg.kind === "system") {
@@ -62,6 +78,12 @@ export const MessageLine = ({ msg, grouped, members }: { msg: Message; grouped: 
             {files.map((m) => `[${m.name}]`).join(" ")}
           </Text>
         )}
+      </Box>
+      <Box>
+        <Text color={theme.colors.mutedForeground}>
+          {ACTIONS.join(" ".repeat(GAP))}
+          {reaction ? <Text color={theme.colors.accent}>{"   " + reaction}</Text> : null}
+        </Text>
       </Box>
     </Box>
   );

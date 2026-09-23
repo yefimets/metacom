@@ -15,7 +15,7 @@ export const Highlighted = ({ text, members, color }: { text: string; members: M
   let i = 0;
   for (const m of text.matchAll(MENTION)) {
     const [all, pre, word] = m;
-    const known = members.has(word!);
+    const known = members.has(word!) || word === "auto";
     if (!known) continue;
     const start = m.index! + pre!.length;
     if (start > last) parts.push(<Text key={i++} color={color ?? theme.colors.foreground}>{text.slice(last, start)}</Text>);
@@ -30,8 +30,8 @@ export const Highlighted = ({ text, members, color }: { text: string; members: M
   return <Text wrap="wrap">{parts}</Text>;
 };
 
-export const Name = ({ name, kind, bold = true }: { name: string; kind?: string; bold?: boolean }) => (
-  <Text color={nameColor(name.trim())} bold={bold && kind !== "agent"} italic={kind === "agent"}>
+export const Name = ({ name, bold = true }: { name: string; kind?: string; bold?: boolean }) => (
+  <Text color={nameColor(name.trim())} bold={bold}>
     {name}
   </Text>
 );

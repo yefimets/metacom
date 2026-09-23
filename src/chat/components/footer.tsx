@@ -1,12 +1,12 @@
 import { Box, Text } from "ink";
 import React from "react";
 
-import { StatusMessage } from "@/components/ui/status-message";
 import { useTheme } from "@/hooks/use-theme";
+import { Spin } from "@/chat/components/glyph";
 import { CONTROL, type Member } from "@/chat/store";
 
 /// One line under the input: what enter will do, or what the chat is busy with.
-export const Footer = ({ text, busy, members, room, attachments = 0 }: { text: string; busy: string | null; members: Map<string, Member>; room: string; attachments?: number }) => {
+export const Footer = ({ text, busy, members, room, attachments = 0, frame }: { text: string; busy: string | null; members: Map<string, Member>; room: string; attachments?: number; frame: number }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   const line = (node: React.ReactNode) => (
@@ -15,10 +15,10 @@ export const Footer = ({ text, busy, members, room, attachments = 0 }: { text: s
     </Box>
   );
   if (busy)
-    return (
-      <Box paddingLeft={2}>
-        <StatusMessage variant="loading">{busy}</StatusMessage>
-      </Box>
+    return line(
+      <Text>
+        <Spin frame={frame} color={theme.colors.primary} /> {busy}
+      </Text>
     );
   const files = attachments ? ` with ${attachments} file${attachments > 1 ? "s" : ""}` : "";
   if (!text) return line(<Text color={muted}>@ to address an agent · / for commands · shift+enter new line · ctrl+v pastes an image · /help</Text>);

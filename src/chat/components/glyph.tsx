@@ -2,26 +2,29 @@ import cliSpinners from "cli-spinners";
 import { Text } from "ink";
 import React from "react";
 
-import { useAnimation } from "@/hooks/use-animation";
 import { useTheme } from "@/hooks/use-theme";
 import { useUnicode } from "@/hooks/use-unicode";
 import { type Member, stateOf } from "@/chat/store";
 
-/// termcn's spinner as a bare Text, so it can sit inside a single-line Text row.
-const Dots = ({ color }: { color: string }) => {
+export const SPIN_INTERVAL = cliSpinners.dots.interval;
+const ASCII_FRAMES = ["-", "\\", "|", "/"];
+
+/// One frame of the dots spinner. The tick lives in the chat root (app.tsx), so every spinner
+/// moves in step and each frame re-renders the whole tree: Ink places the terminal cursor only
+/// on renders the composer takes part in, so a spinner with a timer of its own hid the cursor
+/// on every frame.
+export const Spin = ({ frame, color }: { frame: number; color: string }) => {
   const unicode = useUnicode();
-  const { frames, interval } = cliSpinners.dots;
-  const frame = useAnimation({ intervalMs: interval });
-  const set = unicode ? frames : ["-", "\\", "|", "/"];
+  const set = unicode ? cliSpinners.dots.frames : ASCII_FRAMES;
   return <Text color={color}>{set[frame % set.length]}</Text>;
 };
 
-/// One character that says what a member is doing; working agents get a live spinner.
-export const Glyph = ({ member, animate = true }: { member: Member; animate?: boolean }) => {
+/// One character that says what a member is doing; a working agent spins when given a `frame`.
+export const Glyph = ({ member, frame }: { member: Member; frame?: number }) => {
   const theme = useTheme();
   const state = stateOf(member);
   if (member.kind === "human") return <Text color={member.connected ? theme.colors.success : theme.colors.mutedForeground}>{member.connected ? "◆" : "◇"}</Text>;
-  if (state === "working") return animate ? <Dots color={theme.colors.success} /> : <Text color={theme.colors.success}>●</Text>;
+  if (state === "working") return frame === undefined ? <Text color={theme.colors.success}>●</Text> : <Spin frame={frame} color={theme.colors.success} />;
   if (state === "waiting") return <Text color={theme.colors.success}>●</Text>;
   if (state === "blocked")
     return (

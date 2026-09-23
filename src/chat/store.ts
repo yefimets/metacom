@@ -360,6 +360,49 @@ export class Store {
     this.note(msg, "error");
   }
 
+  /// A short quote of a message, for a reply or a reaction to carry.
+  quote(m: Message, max = 60): string {
+    return this.snippet(m, max);
+  }
+
+  private snippet(m: Message, max = 60): string {
+    const one = (m.text || "").replace(/\s+/g, " ").trim();
+    return one.length > max ? one.slice(0, max - 1) + "…" : one;
+  }
+
+  /// A reaction to someone's message: "+++" or "---", sent to whoever wrote it as a note, so
+  /// an agent reads it in its terminal as feedback rather than as an instruction.
+  async react(msg: Message, mark: string): Promise<void> {
+    const to = msg.from?.name;
+    if (!to || to === this.state.me.name) return this.note("that is your own message", "warn");
+    const text = `${mark} on: "${this.snippet(msg)}"`;
+    try {
+      if (this.state.members.has(to)) {
+        await this.mc!.api.agents.send({ to, text, kind: "info" });
+        this.note(`${mark} to ${to}`, "ok");
+      } else {
+        await this.mc!.api.room.say({ room: this.state.room, text: `${to}: ${text}` });
+      }
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
+  /// Pass a message on to someone else, under your own name, saying where it came from.
+  async forward(msg: Message, to: string, note: string): Promise<void> {
+    const from = msg.from?.name ?? "?";
+    const body = `[forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
+    try {
+      const member = this.state.members.get(to);
+      if (!member) return this.note(`nobody called ${to} is here`, "warn");
+      const kind = member.kind === "agent" ? "command" : "info";
+      const r = await this.mc!.api.agents.send({ to, text: body, kind, media: msg.media });
+      this.note(r.delivered ? `forwarded to ${to}` : `${to} is offline, queued`, "ok");
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
   /// The member a message is for: the first @name in it, wherever it stands. A leading
   /// mention is the address and comes off the text; one in the middle of a sentence is part
   /// of what you wrote, so the whole line travels.
@@ -387,7 +430,8 @@ export class Store {
     if (!r.delivered) this.note(`${to} is offline, queued until it is back`);
   }
 
-  private async command(t: string): Promise<void> {
+  /// `/name args`, also reachable from a key binding.
+  async command(t: string): Promise<void> {
     const [cmd, ...rest] = t.slice(1).split(/\s+/);
     const arg = rest.join(" ");
     const api = this.mc!.api;

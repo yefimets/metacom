@@ -1,19 +1,21 @@
 import fs from "node:fs";
-import { Box, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize } from "ink";
+import { Box, type DOMElement, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { ThemeProvider } from "@/providers/theme-provider";
+import { useAnimation } from "@/hooks/use-animation";
 import { terminalWidth } from "@/lib/terminal-text";
 import type { Theme } from "@/components/ui/types";
 import { Banner, Help, MemberRows, Rooms, Screen } from "@/chat/components/blocks";
 import { Composer, INPUT_ROWS, layout } from "@/chat/components/composer";
 import { Footer } from "@/chat/components/footer";
-import { MessageLine } from "@/chat/components/message";
+import { SPIN_INTERVAL } from "@/chat/components/glyph";
+import { MessageLine, actionAt, type Action } from "@/chat/components/message";
 import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
 import { Editor } from "@/chat/editor";
-import { COMMANDS, type Entry, type Member, type Store } from "@/chat/store";
+import { COMMANDS, type Entry, type Member, type Message, type Store } from "@/chat/store";
 import { themeByName, themeNames } from "@/chat/themes";
 
 /// Rank a candidate against what the user typed: prefix, then substring, then subsequence.
@@ -40,11 +42,25 @@ const MODIFIED_ENTER = /\u001b\[(?:13|10);(\d+)(?::\d+)?u|\u001b\[27;(\d+);(?:13
 const ALT_ON = "\u001b[?1049h\u001b[H";
 const ALT_OFF = "\u001b[?1049l";
 const WHEEL_LINES = 3;
+/// How long a + or − waits for another click before it is sent, so +++ arrives as one mark.
+const REACTION_WAIT = 900;
 const MOUSE_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
 /// Everything written by the terminal rather than typed, so ink does not put it in the message.
 const REPORTS = /\u001b\[<\d+;\d+;\d+[Mm]/g;
+
+/// Where a laid-out node sits on the screen: yoga positions are relative to the parent, so
+/// add them up to the root. Zero-based.
+const screenAt = (node: DOMElement | null | undefined): { left: number; top: number } => {
+  let left = 0;
+  let top = 0;
+  for (let n = node; n?.yogaNode; n = n.parentNode) {
+    left += n.yogaNode.getComputedLeft();
+    top += n.yogaNode.getComputedTop();
+  }
+  return { left, top };
+};
 
 /// What the popup should show for the token at the cursor: members after `@`, commands
 /// after a leading `/`. The selection survives while the list stays the same.
@@ -78,12 +94,12 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
   return { kind, items, index: same ? previous.index : 0, query };
 };
 
-const EntryView = ({ entry, members, nameW, state }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"] }) => {
+const EntryView = ({ entry, members, nameW, state, marks }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; marks: Record<string, string> }) => {
   switch (entry.type) {
     case "banner":
       return <Banner room={state.room} url={state.url} me={state.me.name} role={state.me.role} />;
     case "message":
-      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} />;
+      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} reaction={marks[entry.msg.id]} />;
     case "note":
       return <Note text={entry.text} tone={entry.tone} />;
     case "rule":
@@ -140,6 +156,19 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   }, [editor, store, redraw]);
 
   const submit = useCallback(() => {
+    // a message held for forwarding: the line names who it goes to, the rest rides along
+    const held = forwardRef.current;
+    if (held) {
+      const m = editor.text.trim().match(/^@?([^\s]+)\s*([\s\S]*)$/);
+      if (!m) return;
+      setForward(null);
+      forwardRef.current = null;
+      void store.forward(held, m[1]!, m[2]!.trim());
+      editor.set("");
+      setPopup(EMPTY_POPUP);
+      toBottom();
+      return redraw();
+    }
     // /attach <path> puts the file's token into the input instead of sending anything
     const attach = editor.text.match(/^\/attach\s+(.+)$/s);
     if (attach) {
@@ -168,20 +197,19 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const swallow = useRef("");
   const popupOpen = useRef(false);
   popupOpen.current = popup.kind !== null;
-  // Clicking a name on the status line puts @name into the input. The frame fills the screen,
-  // so the status line is simply that many rows up from the bottom.
+  // Clicking a name on the status line or in a message header puts @name into the input.
   const mouse = state.mouse;
-  const clickState = useRef<{ text: string; cursor: number; width: number; room: string; members: Map<string, Member>; me: string }>({ text: "", cursor: 0, width: 0, room: "", members: new Map(), me: "" });
-  clickState.current = { text: editor.text, cursor: editor.cursor, width: Math.max(30, columns - 1), room: state.room, members: state.members, me: state.me.name };
-  const rowsRef = useRef(0);
-  rowsRef.current = rows;
+  const mouseRef = useRef(mouse);
+  mouseRef.current = mouse;
+  const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[] }>({ room: "", members: new Map(), me: "", log: [] });
+  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log };
 
   // MARK: the scrollback. The conversation lives in a window this draws, not in the terminal's
   // own scrollback, so the input stays pinned at the bottom while the wheel moves the history.
   const [offset, setOffset] = useState(0);
   const follow = useRef(true);
-  const contentRef = useRef(null);
-  const viewRef = useRef(null);
+  const contentRef = useRef<DOMElement>(null);
+  const viewRef = useRef<DOMElement>(null);
   const content = useBoxMetrics(contentRef);
   const view = useBoxMetrics(viewRef);
   const contentH = content.hasMeasured ? content.height : 0;
@@ -211,10 +239,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       stdout.write(ALT_OFF);
     };
   }, [stdout]);
-  const liveRef = useRef(null);
+  const liveRef = useRef<DOMElement>(null);
   const live = useBoxMetrics(liveRef);
-  const liveHeight = useRef(0);
-  liveHeight.current = live.hasMeasured ? live.height : 0;
   useEffect(() => {
     if (!mouse) return;
     stdout.write(MOUSE_ON);
@@ -223,22 +249,125 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     };
   }, [mouse, stdout]);
 
-  const onClick = useCallback(
-    (row: number, col: number) => {
-      const { room, members: list, me } = clickState.current;
-      const dbg = process.env["MC_CLICK_DEBUG"];
-      // 1-based rows from the terminal; a frame one row shorter is tolerated
-      const statusRows = [rowsRef.current - liveHeight.current + 1, rowsRef.current - liveHeight.current];
-      const hit = segments(room, list, me).find((s) => col - 1 >= s.start && col - 1 < s.end);
-      if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, rows: rowsRef.current, liveHeight: liveHeight.current, statusRows, hit }) + "\n");
-      if (!hit || !statusRows.includes(row)) return;
+  // A message waiting for someone to forward it to: the next name picked is the recipient.
+  const [forward, setForward] = useState<Message | null>(null);
+  const forwardRef = useRef<Message | null>(null);
+  forwardRef.current = forward;
+  // Clicking + or − again before the previous one is sent makes it stronger: +, ++, +++.
+  const [marks, setMarks] = useState<Record<string, string>>({});
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
+  const sending = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const react = useCallback(
+    (msg: Message, sign: "+" | "−") => {
+      const current = marksRef.current[msg.id] ?? "";
+      const mark = current.startsWith(sign) ? current + sign : sign;
+      setMarks((m) => ({ ...m, [msg.id]: mark }));
+      clearTimeout(sending.current[msg.id]);
+      sending.current[msg.id] = setTimeout(() => {
+        void store.react(msg, mark.replace(/−/g, "-"));
+        setMarks((m) => {
+          const { [msg.id]: gone, ...rest } = m;
+          return rest;
+        });
+      }, REACTION_WAIT);
+    },
+    [store]
+  );
+
+  // Put @name at the start of the input, replacing whoever was addressed there.
+  const address = useCallback(
+    (name: string) => {
       editor.set(editor.text.replace(/^@\S*\s*/, ""));
       editor.home();
-      editor.insert(`@${hit.name} `);
+      editor.insert(`@${name} `);
       editor.end();
       refresh();
     },
     [editor, refresh]
+  );
+
+  /// The message whose action row was clicked, and which action. The entry's last child is
+  /// that row, so the laid-out tree answers both without measuring text.
+  const feedAction = useCallback((row: number, col: number): { msg: Message; action: Action } | undefined => {
+    const { log } = clickState.current;
+    const content = contentRef.current;
+    if (!content) return;
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = log[i];
+      if (entry?.type !== "message" || entry.msg.kind === "system") continue;
+      // each entry sits in its own wrapper box; the message box inside it ends with the actions
+      const inner = ((child as DOMElement).childNodes[0] as DOMElement | undefined) ?? (child as DOMElement);
+      const kids = inner.childNodes as unknown as DOMElement[];
+      const actions = kids[kids.length - 1];
+      if (!actions?.yogaNode) continue;
+      const at = screenAt(actions);
+      if (at.top !== row - 1) continue;
+      const action = actionAt(col - 1 - at.left);
+      if (action) return { msg: entry.msg, action };
+    }
+    return;
+  }, []);
+
+  // A click on a sender or recipient in a message header of the feed. Each log entry is one
+  // child of the content box, so the entry's header row is found from the laid-out tree.
+  const feedName = useCallback((row: number, col: number): string | undefined => {
+    const { log, me } = clickState.current;
+    const view = viewRef.current;
+    const content = contentRef.current;
+    if (!view?.yogaNode || !content) return;
+    const y = row - 1;
+    const x = col - 1;
+    const v = screenAt(view);
+    if (y < v.top || y >= v.top + view.yogaNode.getComputedHeight()) return;
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = log[i];
+      if (entry?.type !== "message" || entry.grouped || entry.msg.kind === "system") continue;
+      const line = child.nodeName === "ink-box" ? (child.childNodes[0] as DOMElement | undefined) : undefined;
+      if (!line) continue;
+      const at = screenAt(line);
+      if (at.top !== y) continue;
+      const from = entry.msg.from?.name ?? "";
+      const fromW = terminalWidth(from);
+      const c = x - at.left;
+      const name = c >= 0 && c < fromW ? from : entry.msg.to && c >= fromW + 3 && c < fromW + 3 + terminalWidth(entry.msg.to) ? entry.msg.to : undefined;
+      return name && name !== me ? name : undefined;
+    }
+    return;
+  }, []);
+
+  const onClick = useCallback(
+    (row: number, col: number) => {
+      const { room, members: list, me } = clickState.current;
+      const act = feedAction(row, col);
+      if (act) {
+        const { msg, action } = act;
+        if (action === "+" || action === "−") return react(msg, action);
+        if (action === "reply") {
+          const author = msg.from?.name;
+          if (author && author !== me) address(author);
+          editor.end();
+          editor.insert(`${editor.text && !editor.text.endsWith(" ") ? " " : ""}re "${store.quote(msg)}": `);
+          return refresh();
+        }
+        // forward: hold the message, ask who for, and send it on when the name is picked
+        setForward(msg);
+        editor.set("@");
+        editor.end();
+        store.note(`forwarding ${msg.from?.name ?? "?"}'s message — pick who, then enter`, "ok");
+        return refresh();
+      }
+      const name = feedName(row, col);
+      if (name) return address(name);
+      const dbg = process.env["MC_CLICK_DEBUG"];
+      // the status line is the first row of the live area; the terminal counts rows from 1
+      const statusRow = screenAt(liveRef.current).top + 1;
+      const hit = segments(room, list, me).find((s) => col - 1 >= s.start && col - 1 < s.end);
+      if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, statusRow, hit }) + "\n");
+      if (!hit || row !== statusRow) return;
+      address(hit.name);
+    },
+    [address, feedAction, feedName, react, editor, refresh, store]
   );
 
   useEffect(() => {
@@ -262,7 +391,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
           else if (button === 0 && !click) click = m;
         }
         if (wheel) scrollBy(wheel);
-        if (click) onClick(Number(click[3]), Number(click[2]));
+        // with clicking off, the reports are still dropped from the input but acted on by nobody
+        if (click && mouseRef.current) onClick(Number(click[3]), Number(click[2]));
         return;
       }
       const hit = MODIFIED_ENTER.exec(seq);
@@ -287,7 +417,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     return () => {
       process.stdin.off("data", onData);
     };
-  }, [editor, refresh, scrollBy, onClick]);
+  }, [editor, refresh, submit, scrollBy, onClick]);
 
   // A pasted path to an image or document (a file dropped on the terminal) becomes its token.
   usePaste((text) => {
@@ -306,6 +436,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return store.quit();
     }
     if (key.ctrl && input === "d" && !editor.text) return store.quit();
+    // one key to hand the mouse back to the terminal for a moment, to select and copy
+    if (key.ctrl && input === "t") return void store.command("/mouse");
     // cmd+v, once the terminal is told to send ^V for it, lands here too: an image on the
     // clipboard becomes an attachment, a path becomes one, anything else is pasted as text.
     if (key.ctrl && input === "v") {
@@ -391,24 +523,34 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   });
 
   const members = state.members;
+  // The one spinner tick, at the root: every frame re-renders the tree down to the composer,
+  // which keeps Ink placing the terminal cursor (it only does so on renders the composer joins).
+  const frame = useAnimation({ intervalMs: SPIN_INTERVAL, isActive: store.working });
   const nameW = useMemo(() => Math.min(14, Math.max(6, ...[...members.values()].map((m) => terminalWidth(m.name)))), [members]);
   const width = Math.max(30, columns - 1);
   const footerRoom = rows - 3 - Math.min(6, editor.lines.length) - 3;
   const pending = store.pending(editor.text);
   return (
-    <Box flexDirection="column" width={columns} height={rows}>
+    // One row short of the window: Ink 7.1 treats a frame that fills the screen as fullscreen,
+    // drops its final newline and then miscounts by a row, so the terminal cursor lands above the
+    // input and the bottom line is never cleared before a redraw.
+    <Box flexDirection="column" width={columns} height={rows - 1}>
       <Box ref={viewRef} flexGrow={1} flexShrink={1} overflowY="hidden" flexDirection="column">
         {/* short conversation: hug the bottom. long one: the offset scrolls it */}
         <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
+          {/* one box per entry, so a click can be traced back to its entry */}
           {state.log.map((entry) => (
-            <EntryView key={entry.id} entry={entry} members={members} nameW={nameW} state={state} />
+            <Box key={entry.id} flexDirection="column" flexShrink={0}>
+              <EntryView entry={entry} members={members} nameW={nameW} state={state} marks={marks} />
+            </Box>
           ))}
         </Box>
       </Box>
       <Box ref={liveRef} flexDirection="column" flexShrink={0}>
-        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} />
-        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} />
-        {popup.kind ? <Popup popup={popup} room={footerRoom} /> : <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} />}
+        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} />
+        {popup.kind && <Popup popup={popup} room={footerRoom} />}
+        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
+        <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} frame={frame} />
       </Box>
     </Box>
   );

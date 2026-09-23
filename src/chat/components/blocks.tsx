@@ -47,7 +47,7 @@ export const MemberRows = ({ members }: { members: Member[] }) => {
         const info = [m.host ? "@" + m.host : "", m.repo ? m.repo.replace(home, "~") : "", m.caps?.length ? "[" + m.caps.join(",") + "]" : "", accept, m.reason && (state === "blocked" || state === "working") ? "(" + m.reason + ")" : ""].filter(Boolean).join("  ");
         return (
           <Text key={m.name} wrap="truncate-end">
-            <Glyph member={m} animate={false} /> <Name name={padToTerminalWidth(m.name, nameW)} kind={m.kind} /> <Text color={muted}>{padToTerminalWidth(state, 8)}</Text>{" "}
+            <Glyph member={m} /> <Name name={padToTerminalWidth(m.name, nameW)} kind={m.kind} /> <Text color={muted}>{padToTerminalWidth(state, 8)}</Text>{" "}
             <Text color={muted}>{info}</Text>
           </Text>
         );
@@ -132,7 +132,8 @@ export const Help = () => {
       <Row k="ctrl+a ctrl+e ctrl+w ctrl+u ctrl+k" v="line start, line end, delete word, kill to start, kill to end" />
       <Row k="alt+← alt+→  alt+b alt+f" v="word left, word right" />
       <Row k="esc esc" v="close the list; twice clears the input" />
-      <Row k="click a name" v="on the status line, addresses it · /mouse off gives the terminal its selection back" />
+      <Row k="click" v="a name addresses it · reply, forward, + and − under a message act on it" />
+      <Row k="ctrl+t · /mouse" v="turn clicking off for a moment: selection and copy go back to the terminal (option or shift-drag also selects while it is on)" />
       <Row k="wheel · page up/down" v="scroll the conversation; the input stays at the bottom" />
       <Row k="cmd+v / ctrl+v" v="paste the clipboard: an image becomes [image 1.png], a file path the same, text as it is; delete the token to drop the file" />
       <Row k="ctrl+l" v="redraw" />
