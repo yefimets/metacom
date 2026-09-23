@@ -17,7 +17,7 @@ const TYPES = {
   '.txt': 'text/plain',
   '.md': 'text/markdown',
 };
-const MEDIA_DIR = path.join(os.homedir(), '.local', 'share', 'metacom-hub', 'media');
+const MEDIA_DIR = path.join(os.homedir(), '.local', 'share', 'metacom', 'media');
 
 const typeOf = (file) => TYPES[path.extname(file).toLowerCase()] || null;
 
@@ -54,7 +54,7 @@ const attachment = (file) => {
 
 const pretty = (bytes) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
-/// POST the file to the hub; returns the media record to put on a message.
+/// POST the file to metacom; returns the media record to put on a message.
 const upload = async ({ http, token, file }) => {
   const a = attachment(file);
   const res = await fetch(`${http}/media`, {
@@ -87,6 +87,18 @@ const download = async ({ http, url }) => {
   fs.writeFileSync(tmp, Buffer.from(await res.arrayBuffer()), { mode: 0o600 });
   fs.renameSync(tmp, file);
   return file;
+};
+
+/// The text on the clipboard, or ''. The same tools as the image below.
+const clipboardText = () => {
+  const run = (cmd, args) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024, timeout: 5000 }).toString();
+  try {
+    if (process.platform === 'darwin') return run('pbpaste', []);
+    if (process.env.WAYLAND_DISPLAY) return run('wl-paste', ['--no-newline']);
+    return run('xclip', ['-selection', 'clipboard', '-o']);
+  } catch {
+    return '';
+  }
 };
 
 /// The image on the clipboard as a png file, or null when there is none (or no tool for it).
@@ -124,4 +136,4 @@ const clipboardImage = () => {
 /// ` [shot.png 12 KB]` for message lines.
 const describe = (media) => (Array.isArray(media) && media.length ? ' ' + media.map((m) => `[${m.name} ${pretty(m.size || 0)}]`).join(' ') : '');
 
-module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, clipboardImage, describe, pretty };
+module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, clipboardImage, clipboardText, describe, pretty };

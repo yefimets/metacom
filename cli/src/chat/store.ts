@@ -7,6 +7,7 @@ const media = require("../../lib/media.js") as {
   attachment: (file: string) => Omit<Attachment, "token">;
   attachable: (text: string) => string | null;
   clipboardImage: () => string | null;
+  clipboardText: () => string;
   resolvePath: (raw: string) => string;
   upload: (o: { http: string; token: string | null; file: string }) => Promise<Media>;
 };
@@ -76,7 +77,7 @@ export const COMMANDS = [
   { name: "cancel", args: "<name>", help: "send Esc to the agent" },
   { name: "keys", args: "<name> enter|esc|up|down|y", help: "press keys in the agent" },
   { name: "say", args: "<text>", help: "post to the room even if it starts with @ or /" },
-  { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or ctrl+v an image)" },
+  { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
   { name: "clear", args: "", help: "clear the screen" },
@@ -232,7 +233,7 @@ export class Store {
 
   /// Attach a file to the draft: it gets a `[image 2.png]`-style token that the caller puts
   /// into the input text; the file is sent only if the token is still there on enter.
-  /// Sources: ctrl+v (the clipboard image), a pasted file path, /attach <path>.
+  /// Sources: cmd+v or ctrl+v (the clipboard image), a pasted file path, /attach <path>.
   attach(file: string, label?: string): string | null {
     try {
       const a = media.attachment(media.resolvePath(file));
@@ -258,13 +259,21 @@ export class Store {
     return file ? this.attach(file) : null;
   }
 
-  attachClipboard(): string | null {
+  /// Whatever is on the clipboard, as the text to put into the input: an image becomes an
+  /// attachment token, a path becomes one too, anything else is pasted as it is.
+  pasteClipboard(): string | null {
     const file = media.clipboardImage();
-    if (!file) {
-      this.note("no image on the clipboard · /attach <path> sends a file", "warn");
+    if (file) {
+      const token = this.attach(file, `image ${++this.imageSeq}.png`);
+      return token ? token + " " : null;
+    }
+    const text = media.clipboardText();
+    if (!text) {
+      this.note("nothing on the clipboard · /attach <path> sends a file", "warn");
       return null;
     }
-    return this.attach(file, `image ${++this.imageSeq}.png`);
+    const token = this.attachPasted(text.trim());
+    return token ? token + " " : text.replace(/\r\n?/g, "\n");
   }
 
   /// The attachments whose tokens are in the text, in text order.
@@ -402,7 +411,7 @@ export class Store {
         break;
       case "attach":
         // handled in the app: the token has to land in the input
-        this.note("usage: /attach <path> · or paste a path, or ctrl+v an image from the clipboard", "warn");
+        this.note("usage: /attach <path> · or paste a path, or cmd+v an image from the clipboard", "warn");
         break;
       case "rooms":
         this.push({ type: "rooms", rooms: await api.room.list({}) });
