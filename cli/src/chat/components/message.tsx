@@ -78,7 +78,7 @@ export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, select
   const body = bodyOf(msg.text);
   const files = msg.media?.filter((m) => !msg.text.includes(`[${m.name}]`)) ?? [];
   return (
-    <Box flexDirection="column" marginTop={grouped ? 0 : 1}>
+    <Box flexDirection="column">
       {!grouped && (
         <Text>
           <Name name={from} kind={kind} />
