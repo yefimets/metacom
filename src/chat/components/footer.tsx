@@ -21,7 +21,7 @@ export const Footer = ({ text, busy, members, room, attachments = 0 }: { text: s
       </Box>
     );
   const files = attachments ? ` with ${attachments} file${attachments > 1 ? "s" : ""}` : "";
-  if (!text) return line(<Text color={muted}>@ to address an agent · / for commands · ctrl+j new line · ctrl+v pastes an image · /help</Text>);
+  if (!text) return line(<Text color={muted}>@ to address an agent · / for commands · cmd+enter new line · ctrl+v pastes an image · /help</Text>);
   const head = text.match(/^@([^\s]+)/);
   if (head) {
     const name = head[1]!;

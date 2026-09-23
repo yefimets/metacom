@@ -126,7 +126,7 @@ export const Help = () => {
         <Row key={c.name} k={`/${c.name} ${c.args}`} v={c.help} />
       ))}
       <H>keys</H>
-      <Row k="enter" v="send · ctrl+j, alt+enter or a trailing \ for a new line" />
+      <Row k="enter" v="send · cmd+enter, alt+enter, ctrl+j or a trailing \ for a new line" />
       <Row k="@ and /" v="open a list; ↑↓ choose, tab or enter inserts, esc closes" />
       <Row k="↑ ↓" v="move between lines, then through history" />
       <Row k="ctrl+a ctrl+e ctrl+w ctrl+u ctrl+k" v="line start, line end, delete word, kill to start, kill to end" />

@@ -65,6 +65,21 @@ typed into Alex, anything else goes to the room. `/read`, `/wait`, `/cancel`, `/
 solarized, tokyo-night). `ctrl+v` pastes the clipboard image, `--plain` is a readline
 version for pipes.
 
+Enter sends; **cmd+enter**, alt/option+enter, ctrl+j or a trailing `\` start a new line. A
+terminal has to be told to send something for cmd+enter, since most of them keep that chord
+for themselves — bind it to the escape sequence `\e\r` (ESC then carriage return):
+
+| Terminal | Where |
+| --- | --- |
+| iTerm2 | Settings → Keys → Key Bindings → `+` → cmd+enter → *Send Escape Sequence* → `\r` |
+| Ghostty | `keybind = cmd+enter=text:\x1b\r` in `~/.config/ghostty/config` |
+| Terminal.app | Settings → Profiles → Keyboard → `+` → cmd+enter → `\033\r` |
+| VS Code | keybindings.json: `workbench.action.terminal.sendSequence` with `"text": "\u001b\r"` |
+| kitty / WezTerm | already send a CSI u sequence for cmd+enter; nothing to do |
+
+Whatever form arrives — ESC CR, kitty's `CSI 13;9u` (whose super bit most readers drop), or
+xterm's `modifyOtherKeys` — the chat treats it as a new line.
+
 ## One-shot commands
 
 ```
