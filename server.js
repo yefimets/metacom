@@ -7,12 +7,10 @@ const path = require('node:path');
 const { Server } = require('metacom');
 const { Auth } = require('./lib/auth.js');
 const { Org } = require('./lib/org.js');
-const { Assistant } = require('./lib/assistant.js');
 const { createContext } = require('./lib/context.js');
 const { guardSockets } = require('./lib/guard.js');
 const { serveWeb } = require('./lib/web.js');
 const { serveMedia } = require('./lib/media.js');
-const { Telegram } = require('./lib/telegram.js');
 
 const env = process.env;
 const host = env.MC_HOST || '127.0.0.1';
@@ -62,9 +60,7 @@ const main = async () => {
   ].filter((s) => s.token);
   const auth = new Auth(dataDir, console, seeds);
   const org = new Org({ dataDir, auth, console });
-  const assistant = new Assistant({ org, console, apiKey: env.OPENROUTER_API_KEY, model: env.MC_ASSISTANT_MODEL });
-  const telegram = new Telegram({ org, console, dataDir, botToken: env.TELEGRAM_BOT_TOKEN, owner: env.TELEGRAM_OWNER, api: env.TELEGRAM_API });
-  const context = createContext({ org, auth, console, assistant });
+  const context = createContext({ org, auth, console });
   const tls = env.MC_KEY && env.MC_CERT;
   const options = {
     host,
@@ -80,14 +76,12 @@ const main = async () => {
   serveWeb(server.httpServer, path.join(__dirname, 'web'));
   guardSockets(server.wsServer, console);
   await server.listen();
-  console.log(`metacom: ${tls ? 'wss' : 'ws'}://${host}:${port}  data ${dataDir}  assistant ${assistant.enabled ? assistant.model : 'off (no OPENROUTER_API_KEY)'}  telegram ${telegram.enabled ? 'on' : 'off (no TELEGRAM_BOT_TOKEN)'}`);
-  telegram.start();
+  console.log(`metacom: ${tls ? 'wss' : 'ws'}://${host}:${port}  data ${dataDir}`);
   if (host !== '127.0.0.1' && host !== 'localhost' && !tls) {
     console.warn('metacom: listening on a non-local address without TLS; put it behind Caddy or Tailscale');
   }
   const stop = async () => {
     console.log('metacom: stopping');
-    telegram.stop();
     await server.close();
     process.exit(0);
   };

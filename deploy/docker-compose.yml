@@ -16,9 +16,6 @@ services:
       MC_PORT: 8900
       MC_DATA: /data
       MC_CORS: https://${MC_DOMAIN}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_OWNER: ${TELEGRAM_OWNER:-}
     volumes:
       - data:/data
     expose:

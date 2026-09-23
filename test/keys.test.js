@@ -8,7 +8,6 @@ const path = require('node:path');
 const { Org } = require('../lib/org.js');
 const { Auth } = require('../lib/auth.js');
 const { Keys } = require('../lib/keys.js');
-const { Telegram } = require('../lib/telegram.js');
 const c = require('../lib/crypto.js');
 
 const quiet = { log() {}, warn() {}, info() {}, error() {} };
@@ -66,35 +65,24 @@ test('keys: devices are remembered at sign-in and register, owner seals a room k
   assert.throws(() => org.keys.put('dev', { nope: { epk: 'x', iv: 'y', ct: 'z' } }), (e) => e.code === 400);
 });
 
-test('keys: the server opens a room only when granted; telegram shows [encrypted] otherwise', async () => {
-  const { org, phone, agentConn, dir } = setup();
+test('keys: the server opens a room only when granted, and seals what it writes', () => {
+  const { org, phone, agentConn } = setup();
   const rk = c.generateRoomKey();
   org.keys.put('dev', { [phone.publicKey]: c.seal(rk, phone.publicKey) });
-  const sent = [];
-  const fetchImpl = async (url, { body }) => {
-    const method = url.split('/').pop();
-    if (method === 'sendMessage') sent.push(JSON.parse(body));
-    return { ok: true, json: async () => ({ ok: true, result: method === 'getUpdates' ? [] : true }) };
-  };
-  const tg = new Telegram({ org, console: quiet, botToken: 't', dataDir: dir, fetchImpl, owner: 'misha' });
-  tg.state.chats['-1'] = { room: 'dev' };
-  tg.start();
-  tg.stop();
+  // not granted: the server cannot read the room, and refuses to write into it
   org.say(agentConn, 'dev', c.encryptText('secret plan', rk, 'dev'));
-  await tg.queue;
-  assert.strictEqual(sent.at(-1).text, 'Alex: [encrypted]');
-  // owner typing into the group is refused, the room is encrypted and the server has no key
-  await tg.onUpdate({ chat: { id: -1 }, from: { username: 'misha' }, text: 'hello' });
-  await tg.queue;
-  assert.match(sent.at(-1).text, /encrypted and the server was not granted/);
-  // grant the server: now it relays in the clear both ways
+  const stored = org.history(org.local('t'), 'dev', 1)[0];
+  assert.ok(c.isSealed(stored.text));
+  assert.strictEqual(org.keys.open('dev', stored.text), null);
+  assert.throws(() => org.keys.close('dev', 'from the server'), (e) => e.code === 403);
+  // granted: it opens and seals like any other device
   org.keys.put('dev', { [org.keys.serverPublicKey]: c.seal(rk, org.keys.serverPublicKey) });
   assert.strictEqual(org.keys.roomKey('dev'), rk);
-  org.say(agentConn, 'dev', c.encryptText('tests pass', rk, 'dev'));
-  await tg.queue;
-  assert.strictEqual(sent.at(-1).text, 'Alex: tests pass');
-  await tg.onUpdate({ chat: { id: -1 }, from: { username: 'misha' }, text: 'ship it' });
-  const last = org.history(org.local('t'), 'dev', 1)[0];
-  assert.ok(c.isSealed(last.text), 'what the group typed is stored sealed');
-  assert.strictEqual(c.decryptText(last.text, rk, 'dev'), 'ship it');
+  assert.strictEqual(org.keys.open('dev', stored.text), 'secret plan');
+  const sealed = org.keys.close('dev', 'from the server');
+  assert.ok(c.isSealed(sealed));
+  assert.strictEqual(c.decryptText(sealed, rk, 'dev'), 'from the server');
+  // a plain room passes text through untouched
+  assert.strictEqual(org.keys.close('other', 'plain'), 'plain');
+  assert.strictEqual(org.keys.open('other', 'plain'), 'plain');
 });

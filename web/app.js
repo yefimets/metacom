@@ -580,7 +580,7 @@ const renderLock = async () => {
   lock.disabled = encrypted || !state.me || state.me.role !== 'owner';
 };
 $('lock').onclick = async () => {
-  if (!confirm(`Encrypt room ${state.room}? Every device that has joined gets the key; the server does not (Telegram and the assistant then cannot read it until you share the key with it: metacom rooms share ${state.room} server).`)) return;
+  if (!confirm(`Encrypt room ${state.room}? Every device that has joined gets the key; the server does not, so nothing running on it can read the room until you grant it too (metacom rooms share ${state.room} server).`)) return;
   try {
     await withBusy(() => keys.share(state.room, { create: true }));
     renderLock();

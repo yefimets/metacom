@@ -1,16 +1,15 @@
 # metacom
 
 A framework for an agentic-first organisation: one place where your coding agents, wherever
-they run, the connectors that reach people (a phone, a Telegram group, a voice assistant) and
-you meet. Rooms with an append-only log, named members that outlive their processes, live
-status read from each agent's real terminal, directed instructions that are typed into an
-agent only when it is idle, and end-to-end encrypted rooms. One Node process, no database.
+they run, and you meet. Rooms with an append-only log, named members that outlive their
+processes, live status read from each agent's real terminal, directed instructions that are
+typed into an agent only when it is idle, and end-to-end encrypted rooms. One Node process,
+no database.
 
 ```
- phone (web client) ──────── wss ──┐
- Telegram group ───── bot API ─────┤          ┌── metacom dev -n Alex claude    (a Mac)
- Flow (voice) ──────── http ───────┼─ metacom ┼── metacom dev -n Bob codex      (a Mac)
- metacom send / say / tail ── ws ──┘          └── metacom dev -n Deploy claude  (a VPS)
+ phone (web client) ──────── wss ──┐          ┌── metacom dev -n Alex claude    (a Mac)
+ metacom send / say / tail ── ws ──┼─ metacom ┼── metacom dev -n Bob codex      (a Mac)
+ metacom dev -n Misha (chat) ─ ws ─┘          └── metacom dev -n Deploy claude  (a VPS)
                     rooms, members, status, sealed room keys
 ```
 
@@ -23,9 +22,7 @@ and people is [metacomdev/cli](https://github.com/metacomdev/cli). Both are buil
 | `server.js` | the process: auth, rooms, members, connectors, static phone client |
 | `lib/org.js` | rooms, members, directed messages, status, inboxes, the event bus connectors listen on |
 | `lib/keys.js`, `lib/crypto.js` | room encryption: device keys, sealed room keys, the server's own device |
-| `lib/telegram.js` | a Telegram group as a window on a room |
-| `lib/assistant.js`, `lib/tools.js` | the voice assistant's brain (Flow) over a closed, typed tool set |
-| `api/index.js` | the API units: `auth`, `agents`, `room`, `keys`, `admin`, `assistant` |
+| `api/index.js` | the API units: `auth`, `agents`, `room`, `keys`, `admin` |
 | `web/` | the phone client, plain HTML/JS, no build |
 | `deploy/` | Docker + Caddy for a VPS, launchd for a Mac, systemd for Linux |
 
@@ -33,7 +30,7 @@ and people is [metacomdev/cli](https://github.com/metacomdev/cli). Both are buil
 
 - **Members** are named identities, not processes. `Alex` stays `Alex` across restarts and
   machines; an offline agent keeps its inbox until it comes back. Two roles: *owner* tokens
-  (you, the phone, Flow) see every room, create tokens, command agents; *agent* tokens
+  (you, the phone, the chat) see every room, create tokens, command agents; *agent* tokens
   register, report status, post and read their own room, and message other agents.
 - **Agents** are ordinary terminal programs (Claude Code, Codex, anything) run by the CLI's
   wrapper in a pseudo-terminal. The wrapper watches the real screen and reports `starting`,
@@ -52,17 +49,18 @@ and people is [metacomdev/cli](https://github.com/metacomdev/cli). Both are buil
   instruction. The owner's messages are always commands.
 - **Control commands** from the owner act at once and are never typed as text: `!cancel`
   (Esc), `!keys enter|esc|up|down|y`, `!type text`, `!stop`. They answer a blocked agent from
-  the phone, the chat or Telegram.
+  the phone or the chat.
 - **Server-owned waits.** `metacom send Alex "…" --wait` returns when the turn ends (or
   reports `stalled` when the agent never started); `metacom wait Alex` blocks until it is
   ready.
 - **One log per room.** Every message, directed or not, plus system events, is an append-only
-  JSONL record with a `kind`; the chat, the phone, Telegram and `metacom tail` show the same
-  stream. Files (images, pdf, text; 20 MB, 8 per message) travel with messages and are typed
-  into an agent as local paths.
-- **Connectors** live in the server process and listen on `org.events` (`room/message`,
-  `agents/attention`, `agents/changed`). Telegram is the first; the assistant is another. They
-  act through the same API as everyone else, under the server's own device key (below).
+  JSONL record with a `kind`; the chat, the phone and `metacom tail` show the same stream.
+  Files (images, pdf, text; 20 MB, 8 per message) travel with messages and are typed into an
+  agent as local paths.
+- **Connectors** are the extension point: something living in the server process listens on
+  `org.events` (`room/message`, `agents/attention`, `agents/changed`) and acts through the
+  same API as everyone else, under the server's own device key (below). None ship today;
+  `docs/direction.md` has the intended shape.
 
 ## Encryption
 
@@ -79,10 +77,9 @@ So the server, its disk, its logs and anything in between see ciphertext; device
   the next owner device that comes online (the chat, the phone and one-shot owner commands all
   share on `keys/changed` and `agents/changed`).
 - The server is a device too, listed as `server`. It gets a room key only when you grant it:
-  `metacom rooms encrypt dev server` or `metacom rooms share dev server`. Without it the
-  Telegram group shows `[encrypted]` and refuses to relay inwards, and the assistant cannot
-  read or post there. With it, the server can read that room, which is the trade you make for
-  connectors that live on it.
+  `metacom rooms encrypt dev server` or `metacom rooms share dev server`. Leave it out and the
+  server cannot read or write that room at all; grant it and anything running there can, which
+  is the trade a connector living on the server costs.
 - `metacom rooms devices dev` lists devices and who holds the key; `metacom rooms revoke dev
   <publicKey>` removes one copy (a new key with `rooms encrypt` is the only way to lock a
   device out of what it already read).
@@ -103,9 +100,8 @@ and `metacom dev -n Alex claude` in a repository. Full command list in the cli r
 
 Settings are environment variables: `MC_HOST` (127.0.0.1), `MC_PORT` (8900), `MC_DATA`,
 `MC_CORS`, `MC_KEY` + `MC_CERT` for TLS, `MC_OWNER_TOKEN` / `MC_AGENT_TOKEN` to seed tokens
-on hosts without a disk, `OPENROUTER_API_KEY` (+ `MC_ASSISTANT_MODEL`) for the assistant,
-`TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER` for Telegram. A lost owner token: `node server.js
-token misha --role owner` on the server machine; the running server picks it up.
+on hosts without a disk. A lost owner token: `node server.js token misha --role owner` on the
+server machine; the running server picks it up.
 
 ### Phone
 
@@ -116,24 +112,6 @@ the room stream, a composer addressed like the chat (`@` pops the member list, `
 to that agent, anything else to the room; tapping a card fills the mention in), an unread
 pill when you scrolled up, a *screen* button per agent with Enter / Esc / y / arrows / Cancel
 keys, and the lock that encrypts the room. Long-press the logo to forget the token.
-
-### Telegram
-
-A Telegram group as a window on a room. Make a bot with [@BotFather](https://t.me/BotFather),
-turn its privacy mode off (`/setprivacy` → Disable), set `TELEGRAM_BOT_TOKEN` and
-`TELEGRAM_OWNER` (your username or id; unset, the first `/join` claims it), add the bot to the
-group and type `/join dev`. The group receives the room stream (says, commands, `Alex needs
-you: …`, `Alex is done`); your messages go in like from the phone (`@Alex run tests` is a
-command, anything else is posted as `tg:you`); `/agents`, `/read Alex`, `/leave`. Other group
-members only read. Long polling, no webhook or public URL. For an encrypted room, grant the
-server the key first.
-
-### Flow (voice)
-
-The assistant lives here: Flow sends the transcript plus what it sees on screen; the server
-runs the model (OpenRouter) over a closed, typed tool set, executes `message_agent`,
-`read_agent`, `say_to_room` itself and returns Flow only validated local actions (flows,
-windows, apps). Anything outside the schema is refused on both sides.
 
 ## Deploy
 
@@ -158,14 +136,14 @@ windows, apps). Anything outside the schema is refused on both sides.
 - Binds to 127.0.0.1 by default and warns when started elsewhere without TLS. The phone client
   is served with a strict CSP; its token and device key stay in that browser.
 - Encrypted rooms keep the server, its disk and its logs out of the content (above). Grant
-  the server's device only the rooms whose connectors you need.
+  the server's own device only the rooms something running there must read.
 - Agents treat room text as data: their system prompt says which lines are owner instructions
   and which are other agents' information.
 
 ## Development
 
 ```bash
-npm test                              # org, auth, keys, media, telegram, tools
+npm test                              # org, auth, keys, media
 ```
 
 Upstream metacom master (Node 22+) is used from GitHub (`github:metarhia/metacom#41e8d16`);

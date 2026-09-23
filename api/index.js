@@ -4,7 +4,7 @@ const { fail } = require('../lib/errors.js');
 
 /// Every method is `public` for metacom and authenticates itself through org.identify():
 /// websocket callers sign in once, HTTP callers pass `token` in every call.
-const buildApi = ({ org, auth, console, assistant }) => {
+const buildApi = ({ org, auth, console }) => {
   const method = (handler) => ({ access: 'public', handler });
   const units = {
     system: {
@@ -82,22 +82,6 @@ const buildApi = ({ org, auth, console, assistant }) => {
         if (!pub) throw fail(400, 'sign in with a publicKey first');
         const target = String(room || '').slice(0, 64);
         return { room: target, encrypted: org.keys.encrypted(target), sealed: org.keys.sealedFor(target, pub) };
-      }),
-    },
-    assistant: {
-      ask: method(async ({ token, ...args } = {}, context) => {
-        const conn = org.identify(context, { token });
-        org.owner(conn);
-        return assistant.ask(conn, args);
-      }),
-      resume: method(async ({ token, ...args } = {}, context) => {
-        const conn = org.identify(context, { token });
-        org.owner(conn);
-        return assistant.resume(conn, args);
-      }),
-      tools: method(async (args = {}, context) => {
-        org.identify(context, args);
-        return require('../lib/tools.js').TOOLS.map(({ name, where, description }) => ({ name, where, description }));
       }),
     },
     admin: {

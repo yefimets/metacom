@@ -2,7 +2,7 @@
   "name": "@metacomdev/metacom",
   "version": "0.2.0",
   "private": false,
-  "description": "Framework for an agentic-first organisation: rooms where coding agents on any machine, connectors (Telegram, voice) and their owner meet. Encrypted rooms, one Node process, no database.",
+  "description": "Framework for an agentic-first organisation: rooms where coding agents on any machine and their owner meet. Encrypted rooms, one Node process, no database.",
   "main": "server.js",
   "bin": {
     "metacom-server": "server.js"
