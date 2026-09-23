@@ -32,13 +32,14 @@ and people is [metacomdev/cli](https://github.com/metacomdev/cli). Both are buil
   machines; an offline agent keeps its inbox until it comes back. Two roles: *owner* tokens
   (you, the phone, the chat) see every room, create tokens, command agents; *agent* tokens
   register, report status, post and read their own room, and message other agents.
-- **Agents** are ordinary terminal programs (Claude Code, Codex, anything) run by the CLI's
-  wrapper in a pseudo-terminal. The wrapper watches the real screen and reports `starting`,
-  `working`, `waiting`, `blocked` (a permission or question dialog is open), `stopped`, plus
-  `done` when a turn the owner asked for finished and nobody looked yet. Instructions are typed
-  into the agent only when it is `waiting`, never into a dialog. Agents get MCP tools
-  (`mc_agents`, `mc_read`, `mc_say`, `mc_send`, `mc_wait`, `mc_wait_agent`) to read and post
-  in the room and to hand work to each other.
+- **Agents** are ordinary terminal programs run by the CLI's wrapper in a pseudo-terminal.
+  The wrapper watches the real screen and reports `starting`, `working`, `waiting`, `blocked`
+  (a permission or question dialog is open), `stopped`, plus `done` when a turn the owner
+  asked for finished and nobody looked yet. Instructions are typed into the agent only when it
+  is `waiting`, never into a dialog. Any program can be wrapped; **Claude Code, Codex and
+  opencode** are configured further, each in its own way, so they also get the room's MCP
+  tools (`mc_agents`, `mc_read`, `mc_say`, `mc_send`, `mc_wait`, `mc_wait_agent`) and a
+  briefing — that is what lets them read the room and hand work to each other.
 - **Addressing is explicit.** A message that starts with `@Alex` is typed into Alex; anything
   else is posted to the room. There is no automatic routing: the person or agent that sends
   work names who does it.
