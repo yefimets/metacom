@@ -195,9 +195,11 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return store.quit();
     }
     if (key.ctrl && input === "d" && !editor.text) return store.quit();
+    // cmd+v, once the terminal is told to send ^V for it, lands here too: an image on the
+    // clipboard becomes an attachment, a path becomes one, anything else is pasted as text.
     if (key.ctrl && input === "v") {
-      const token = store.attachClipboard();
-      if (token) editor.insert(token + " ");
+      const insert = store.pasteClipboard();
+      if (insert) editor.insert(insert);
       return refresh();
     }
     if (key.escape) {

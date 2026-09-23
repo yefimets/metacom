@@ -132,7 +132,7 @@ export const Help = () => {
       <Row k="ctrl+a ctrl+e ctrl+w ctrl+u ctrl+k" v="line start, line end, delete word, kill to start, kill to end" />
       <Row k="alt+← alt+→  alt+b alt+f" v="word left, word right" />
       <Row k="esc esc" v="close the list; twice clears the input" />
-      <Row k="ctrl+v" v="paste the clipboard image as [image 1.png] · pasting a file path gives [name.png]; delete the token to drop the file" />
+      <Row k="cmd+v / ctrl+v" v="paste the clipboard: an image becomes [image 1.png], a file path the same, text as it is; delete the token to drop the file" />
       <Row k="ctrl+l" v="redraw" />
       <Row k="ctrl+c" v="clear the input, then leave" />
     </Box>

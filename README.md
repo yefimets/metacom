@@ -62,8 +62,7 @@ status line (`●` idle, spinner working, `!` needs you, `✓` done, `○` offli
 multi-line input and a popup. `@` opens the member list, `/` the commands. `@Alex text` is
 typed into Alex, anything else goes to the room. `/read`, `/wait`, `/cancel`, `/keys`,
 `/attach`, `/theme` (default, catppuccin, dracula, github, gruvbox, nord, one-dark, rose-pine,
-solarized, tokyo-night). `ctrl+v` pastes the clipboard image, `--plain` is a readline
-version for pipes.
+solarized, tokyo-night). `--plain` is a readline version for pipes.
 
 Enter sends; **cmd+enter**, alt/option+enter, ctrl+j or a trailing `\` start a new line. A
 terminal has to be told to send something for cmd+enter, since most of them keep that chord
@@ -79,6 +78,13 @@ for themselves — bind it to the escape sequence `\e\r` (ESC then carriage retu
 
 Whatever form arrives — ESC CR, kitty's `CSI 13;9u` (whose super bit most readers drop), or
 xterm's `modifyOtherKeys` — the chat treats it as a new line.
+
+**Pasting.** `ctrl+v` pastes whatever is on the clipboard: an image is attached as
+`[image 1.png]` and uploaded with the message, a file path becomes an attachment the same
+way, anything else is inserted as text. For **cmd+v** to do that, bind it to `^V` (hex 16)
+— iTerm2: *Send Hex Code* `0x16`; Ghostty: `keybind = cmd+v=text:\x16`; Terminal.app: `\026`.
+That replaces the terminal's own paste, which is the point: a terminal cannot paste an image
+into a text stream, and text still arrives through the same key.
 
 ## One-shot commands
 
