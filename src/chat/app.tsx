@@ -411,8 +411,13 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       return store.quit();
     }
     if (key.ctrl && input === "d" && !editor.text) return store.quit();
-    // one key to hand the mouse back to the terminal for a moment, to select and copy
-    if (key.ctrl && input === "t") return void store.command("/mouse");
+    // One key hands the mouse back to the terminal so a drag selects text as usual. Typing
+    // anything afterwards takes it back, so you cannot be left wondering why clicks do nothing.
+    if (key.ctrl && input === "t") {
+      store.setMouse(!store.state.mouse, true);
+      return;
+    }
+    if (!store.state.mouse && !key.ctrl && !key.meta) store.setMouse(true, false);
     // cmd+v, once the terminal is told to send ^V for it, lands here too: an image on the
     // clipboard becomes an attachment, a path becomes one, anything else is pasted as text.
     if (key.ctrl && input === "v") {
