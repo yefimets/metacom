@@ -2,8 +2,8 @@
 
 The `metacom` command (alias `mc`): joins a coding agent, or you, to a
 [metacom](https://github.com/metacomdev/metacom) organisation. It wraps any terminal program
-(Claude Code, Codex, a shell) so the room sees its live status and can type into it, gives
-Claude Code MCP tools to talk to the room and to other agents, and is the terminal chat for
+so the room sees its live status and can type into it, gives Claude Code, Codex and opencode
+the room's MCP tools so they can talk to it and to each other, and is the terminal chat for
 humans. Every machine it runs on is a *device* with its own key for encrypted rooms.
 
 ```bash
@@ -19,18 +19,39 @@ metacom dev -n Misha                               # you, in the terminal chat
 `metacom <room> -n <name> [--repo P] [--caps a,b] [--accept owner|any|A,B] [--no-mcp] -- <command…>`
 
 Runs the command in a pseudo-terminal and follows its output in a headless terminal, so it
-sees the real screen. Status comes from the progress state and title Claude Code emits, then
-from the bottom of the screen: `starting`, `working`, `waiting`, `blocked` (a permission or
-question dialog), `stopped`. Instructions from the room are typed in only when it is
+sees the real screen. Status is `starting`, `working`, `waiting`, `blocked` (a permission or
+question dialog) or `stopped`. Instructions from the room are typed in only when it is
 `waiting`, as `[metacom Misha] …`, never into a dialog; control commands (`!cancel`, `!keys
 enter`, `!type`, `!stop`) act at once. The agent always gets a plain `xterm-256color`
 environment, so running the wrapper inside tmux does not hide Claude Code's progress state.
 
-Claude Code gets MCP tools: `mc_agents` (who is here, status, whose commands each takes),
-`mc_read` (the room), `mc_say` (post), `mc_send` (a command or note to another agent),
-`mc_wait` (next message), `mc_wait_agent` (until an agent is ready). Its system prompt
-explains which lines are the owner's instructions and which are other agents' notes.
+## Agents it configures
+
+Wrapping, status, typing, control commands and encryption work with **any** terminal program.
+On top of that, three harnesses get the room's MCP tools — `mc_agents` (who is here, status,
+whose commands each takes), `mc_read` (the room), `mc_say` (post), `mc_send` (a command or
+note to another agent), `mc_wait` (next message), `mc_wait_agent` (until an agent is ready) —
+and a briefing that explains which lines in their terminal are the owner's instructions and
+which are other agents' notes:
+
+| Command | Tools via | Briefing via |
+| --- | --- | --- |
+| `claude` | `--mcp-config` | `--append-system-prompt` |
+| `codex` | `-c mcp_servers.metacom.…`, merged over your `~/.codex/config.toml` | the MCP server's own `instructions` |
+| `opencode` | `OPENCODE_CONFIG_CONTENT`, merged over your `opencode.json` (model, providers and your own MCP servers are kept) | an `instructions` file, written to `~/.local/share/metacom/` |
+| anything else | — | — |
+
+Nothing in your config files is modified: both merges happen in the environment of that one
+child process. `--no-mcp` turns the tools off; an unwrapped harness still joins the room, is
+watched and can be typed into, it just cannot speak on its own.
+
 `--accept` says whose commands this agent takes (any by default; the owner always may).
+
+Status comes from the terminal title and progress escapes when a harness emits them (Claude
+Code does), otherwise from output activity. A question on screen is detected by shape —
+Claude Code's dialogs, Codex approvals, opencode's *Permission required* — and shows as
+`blocked` with the question. `MC_BLOCKED='your regex'` adds a pattern for a harness whose
+prompt is not recognised (`|||` separates several).
 
 ## The chat
 
@@ -81,7 +102,12 @@ picks the chat theme.
 ## Development
 
 ```bash
+npm test                          # harness wiring and screen classification
 npm run typecheck                 # the chat's TypeScript
 npm run test:tui                  # drives the chat in a pty against a running server
 node scripts/termcn-sync.js <item…>   # pull termcn components into src/ verbatim
 ```
+
+`npm test` also checks that `codex` and `opencode` really accept what the wrapper builds,
+when they are installed: `npm i @openai/codex opencode-ai` somewhere and run
+`MC_TEST_AGENTS=<that>/node_modules/.bin npm test`; without it those two cases are skipped.

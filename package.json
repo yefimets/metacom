@@ -11,7 +11,8 @@
     "postinstall": "node scripts/fix-pty.js",
     "typecheck": "tsc -p tsconfig.json",
     "test:tui": "node test/tui-smoke.js && node test/tui-scenarios.js",
-    "termcn": "node scripts/termcn-sync.js"
+    "termcn": "node scripts/termcn-sync.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=22"
