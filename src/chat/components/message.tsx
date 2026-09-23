@@ -29,6 +29,11 @@ export const actionAt = (c: number): Action | undefined => {
   return undefined;
 };
 
+/// A forwarded message carries where it came from at the front of its text, so an agent
+/// reading its terminal sees it. On screen it belongs beside the time instead.
+export const FORWARDED = /^\[forwarded from ([^\]]+)\]\s*/;
+export const bodyOf = (text: string): string => text.replace(FORWARDED, "");
+
 export const time = (ts: string): string => {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
@@ -68,6 +73,9 @@ export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, select
   const from = msg.from?.name ?? "?";
   const kind = members.get(from)?.kind ?? msg.from?.kind;
   const control = msg.kind === "control";
+  // a forwarded message says so beside the time, not in the middle of what was written
+  const forwarded = FORWARDED.exec(msg.text);
+  const body = bodyOf(msg.text);
   const files = msg.media?.filter((m) => !msg.text.includes(`[${m.name}]`)) ?? [];
   return (
     <Box flexDirection="column" marginTop={grouped ? 0 : 1}>
@@ -83,11 +91,14 @@ export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, select
               </Text>
             </Text>
           )}
-          <Text color={muted}>{"  " + time(msg.ts)}</Text>
+          <Text color={muted}>
+            {"  " + time(msg.ts)}
+            {forwarded ? `  [forwarded from ${forwarded[1]}]` : ""}
+          </Text>
         </Text>
       )}
       <Box flexDirection="column">
-        {wrapLines(msg.text, width).map((line, i) =>
+        {wrapLines(body, width).map((line, i) =>
           control ? (
             <Text key={i} color={theme.colors.accent}>
               {line}

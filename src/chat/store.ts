@@ -100,12 +100,12 @@ export const COMMANDS = [
 export const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
 
 /// One-word state for a member as humans think of it, not the raw metacom status.
-export const stateOf = (m: Member): string => {
+/// Three words for what a member is: here and busy, here and not, or gone. The server knows
+/// more (starting, blocked, a finished turn nobody looked at), and the room's own messages
+/// carry that when it matters; the line above the input does not need it.
+export const stateOf = (m: Member): "online" | "working" | "offline" => {
   if (!m.connected) return "offline";
-  if (m.kind === "human") return "online";
-  if (m.status === "blocked") return "blocked";
-  if (m.attention) return "done";
-  return m.status;
+  return m.status === "working" ? "working" : "online";
 };
 
 let seq = 0;
@@ -119,6 +119,7 @@ export class Store {
   private listeners = new Set<() => void>();
   private lastMessage: { name: string; ts: number; to?: string } | null = null;
   private states = new Map<string, string>();
+  private marks = new Map<string, string>(); // what was last announced about an agent
   onBell: () => void = () => {};
   onQuit: () => void = () => {};
   onTheme: (name: string) => string | null = () => null;
@@ -258,13 +259,19 @@ export class Store {
       const state = stateOf(m);
       const was = before.get(m.name);
       this.states.set(m.name, state);
-      if (m.kind !== "agent" || !was || was === state) continue;
-      if (state === "blocked") {
+      if (m.kind !== "agent") continue;
+      // The line above the input says only online, working or offline. Two things still have
+      // to reach the reader, so they arrive in the conversation instead: an agent stuck on a
+      // question, and one that has just finished what it was asked for.
+      const stuck = m.status === "blocked";
+      if (stuck && this.marks.get(m.name) !== "blocked") {
         this.note(`${m.name} needs you${m.reason ? ": " + m.reason : ""}  ·  /read ${m.name}, then @${m.name} !keys y or @${m.name} !cancel`, "warn");
         this.onBell();
-      } else if (state === "done") {
+      } else if (!stuck && m.attention && this.marks.get(m.name) !== "done") {
         this.note(`${m.name} finished  ·  /read ${m.name}`, "ok");
       }
+      this.marks.set(m.name, stuck ? "blocked" : m.attention ? "done" : "");
+      if (!was || was === state) continue;
     }
   }
 
@@ -413,7 +420,7 @@ export class Store {
   /// Pass a message on to someone else, under your own name, saying where it came from.
   async forward(msg: Message, to: string, note: string): Promise<void> {
     const from = msg.from?.name ?? "?";
-    const body = `↪ [forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
+    const body = `[forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
     try {
       const member = this.state.members.get(to);
       if (!member) return this.setStatus(`nobody called ${to} is here`, "warn", 2500);

@@ -10,7 +10,7 @@ import { Banner, Help, MemberRows, Rooms, Screen } from "@/chat/components/block
 import { Composer, INPUT_ROWS, layout } from "@/chat/components/composer";
 import { Footer } from "@/chat/components/footer";
 import { SPIN_INTERVAL } from "@/chat/components/glyph";
-import { MessageLine, actionAt, type Action } from "@/chat/components/message";
+import { MessageLine, actionAt, bodyOf, type Action } from "@/chat/components/message";
 import { type Selection, isEmpty, textOf, wrapLines } from "@/chat/selection";
 import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
@@ -282,7 +282,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       const body = kids[kids.length - 2];
       if (!body?.yogaNode) continue;
       const at = screenAt(body);
-      wrapLines(entry.msg.text, width).forEach((text, n) => out.push({ row: at.top + n + 1, left: at.left, text }));
+      wrapLines(bodyOf(entry.msg.text), width).forEach((text, n) => out.push({ row: at.top + n + 1, left: at.left, text }));
     }
     return out;
   }, []);
