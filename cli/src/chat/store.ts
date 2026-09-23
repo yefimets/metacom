@@ -82,6 +82,7 @@ export const COMMANDS = [
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
   { name: "mouse", args: "[on|off]", help: "clicking names and message buttons (off by default, so text selects)" },
+  { name: "click", args: "", help: "same as ctrl+t: lend the mouse to the chat for one round of clicking" },
   { name: "clear", args: "", help: "clear the screen" },
   { name: "help", args: "", help: "keys and commands" },
   { name: "quit", args: "", help: "leave the chat" },
@@ -472,6 +473,10 @@ export class Store {
       case "theme": {
         const result = this.onTheme(arg);
         if (result) this.note(result, arg ? "ok" : "dim");
+        break;
+      }
+      case "click": {
+        this.setMouse(!this.state.mouse, true);
         break;
       }
       case "mouse": {

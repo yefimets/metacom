@@ -526,7 +526,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         </Box>
       </Box>
       <Box ref={liveRef} flexDirection="column" flexShrink={0}>
-        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} />
+        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
         <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
         <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} frame={frame} mouse={state.mouse} />
