@@ -164,6 +164,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (!m) return;
       setForward(null);
       forwardRef.current = null;
+      store.setStatus(null);
       void store.forward(held, m[1]!, m[2]!.trim());
       editor.set("");
       setPopup(EMPTY_POPUP);
@@ -390,7 +391,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         setForward(msg);
         editor.set("@");
         editor.end();
-        store.note(`forwarding ${msg.from?.name ?? "?"}'s message — pick who, then enter`, "ok");
+        store.setStatus(`forwarding ${msg.from?.name ?? "?"}'s message · pick who and press enter · esc cancels`, "ok");
         return refresh();
       }
       const name = feedName(row, col);
@@ -508,6 +509,15 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     if (key.escape) {
       const twice = Date.now() - lastEsc.current < 900;
       lastEsc.current = Date.now();
+      // a message held for forwarding goes first: esc puts it down
+      if (forwardRef.current) {
+        setForward(null);
+        forwardRef.current = null;
+        editor.set("");
+        setPopup(EMPTY_POPUP);
+        store.setStatus("forwarding cancelled", "warn", 1500);
+        return refresh();
+      }
       if (open) {
         setPopup({ ...EMPTY_POPUP, dismissed: editor.token().text });
         return redraw();
@@ -610,7 +620,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
         <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
-        <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} frame={frame} mouse={state.mouse} />
+        <Footer text={editor.text} busy={state.busy} status={state.status} members={members} room={state.room} attachments={pending.length} frame={frame} />
       </Box>
     </Box>
   );

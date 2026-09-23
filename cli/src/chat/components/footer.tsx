@@ -6,7 +6,7 @@ import { Spin } from "@/chat/components/glyph";
 import { CONTROL, type Member } from "@/chat/store";
 
 /// One line under the input: what enter will do, or what the chat is busy with.
-export const Footer = ({ text, busy, members, room, attachments = 0, frame, mouse = false }: { text: string; busy: string | null; members: Map<string, Member>; room: string; attachments?: number; frame: number; mouse?: boolean }) => {
+export const Footer = ({ text, busy, status, members, room, attachments = 0, frame }: { text: string; busy: string | null; status?: { text: string; tone: string } | null; members: Map<string, Member>; room: string; attachments?: number; frame: number; mouse?: boolean }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   const line = (node: React.ReactNode) => (
@@ -14,6 +14,10 @@ export const Footer = ({ text, busy, members, room, attachments = 0, frame, mous
       <Text wrap="truncate-end">{node}</Text>
     </Box>
   );
+  if (status)
+    return line(
+      <Text color={status.tone === "warn" ? theme.colors.warning : status.tone === "error" ? theme.colors.error : theme.colors.success}>{status.text}</Text>
+    );
   if (busy)
     return line(
       <Text>
