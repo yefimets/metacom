@@ -38,17 +38,17 @@ const main = async () => {
   // answer through control command
   await a.type('@Alex !keys enter');
   await a.type(a.key.enter);
-  await a.wait(/⌘ @Alex !keys enter/);
+  await a.wait(/⌘ Alex\s+\d\d:\d\d[\s\S]*!keys enter/);
   show(a, 'ann: control command');
   }
 
   // directed message to a human, mention to another
   await a.type('@bob can you check the deploy?');
   await a.type(a.key.enter);
-  await b.wait(/ann.*→ @bob can you check/);
+  await b.wait(/ann → bob\s+\d\d:\d\d[\s\S]*can you check/);
   await b.type('sure @ann, on it');
   await b.type(b.key.enter);
-  await a.wait(/bob.*sure @ann, on it/);
+  await a.wait(/bob\s+\d\d:\d\d[\s\S]*sure @ann, on it/);
   show(a, 'ann: after exchange');
   show(b, 'bob: after exchange');
 

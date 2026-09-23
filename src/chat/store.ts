@@ -172,7 +172,7 @@ export class Store {
     const share = () => {
       if (mc.me.role === "owner") mc.rooms.share(room).catch(() => {});
     };
-    mc.api.keys.on("changed", share);
+    mc.api.keys?.on("changed", share); // absent on a server without encrypted rooms
     mc.api.agents.on("changed", share);
     mc.api.agents.on("changed", ({ members }: { members: Member[] }) => this.onMembers(members));
     mc.api.agents.on("message", (m: Message) => {
