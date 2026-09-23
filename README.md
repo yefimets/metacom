@@ -77,11 +77,10 @@ while you are reading back does not yank the view, and sending returns to the ne
 chat runs on the alternate screen, so leaving it gives your terminal back as it was.
 
 **Clicking.** A click on a name — in the status line or in a message header — puts `@name `
-at the front of the input. Under every message sits a muted row: **reply** addresses its
-author and quotes the line, **forward** asks who for and then sends it on under your own name
-marked `[forwarded from X]`, and **+** / **−** send a mark to whoever wrote it as a note, not
-an instruction; clicking again before it leaves makes it stronger, so three clicks arrive as
-`+++`. `ctrl+t` (or `/mouse`) hands the mouse back to the terminal when you want to select
+at the front of the input. Under every message sits a muted row: **↩ reply** addresses its
+author and quotes the line it answers, **↪ forward** asks who for and then sends it on under
+your own name marked `↪ [forwarded from X]`, so an agent reads where it came from.
+`ctrl+t` (or `/mouse`) hands the mouse back to the terminal when you want to select
 and copy, and while it is off a click does nothing rather than acting unseen. This needs mouse reporting, which takes text selection
 away from the terminal while the chat runs — hold option (macOS) or shift to select anyway,
 or turn it off with `/mouse off` (`MC_MOUSE=0` to start that way). Clicks anywhere else are

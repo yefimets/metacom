@@ -370,24 +370,6 @@ export class Store {
     return one.length > max ? one.slice(0, max - 1) + "…" : one;
   }
 
-  /// A reaction to someone's message: "+++" or "---", sent to whoever wrote it as a note, so
-  /// an agent reads it in its terminal as feedback rather than as an instruction.
-  async react(msg: Message, mark: string): Promise<void> {
-    const to = msg.from?.name;
-    if (!to || to === this.state.me.name) return this.note("that is your own message", "warn");
-    const text = `${mark} on: "${this.snippet(msg)}"`;
-    try {
-      if (this.state.members.has(to)) {
-        await this.mc!.api.agents.send({ to, text, kind: "info" });
-        this.note(`${mark} to ${to}`, "ok");
-      } else {
-        await this.mc!.api.room.say({ room: this.state.room, text: `${to}: ${text}` });
-      }
-    } catch (error) {
-      this.failure(error);
-    }
-  }
-
   /// Pass a message on to someone else, under your own name, saying where it came from.
   async forward(msg: Message, to: string, note: string): Promise<void> {
     const from = msg.from?.name ?? "?";
@@ -500,7 +482,12 @@ export class Store {
       case "mouse": {
         const on = arg === "" ? !this.state.mouse : /^(on|yes|1|true)$/i.test(arg);
         this.set({ mouse: on });
-        this.note(on ? "mouse on · click a name on the status line to address it (hold option to select text)" : "mouse off · the terminal handles selection again", "ok");
+        this.note(
+          on
+            ? "mouse on · click names and the ↩ reply / ↪ forward row · hold option (macOS) or shift to select text"
+            : "mouse off · selection works as usual again; ctrl+t brings the buttons back",
+          "ok"
+        );
         break;
       }
       case "clear":
