@@ -381,15 +381,6 @@ export class Store {
     );
   }
 
-  /// A short quote of a message, for a reply or a reaction to carry.
-  quote(m: Message, max = 60): string {
-    return this.snippet(m, max);
-  }
-
-  private snippet(m: Message, max = 60): string {
-    const one = (m.text || "").replace(/\s+/g, " ").trim();
-    return one.length > max ? one.slice(0, max - 1) + "…" : one;
-  }
 
   /// Pass a message on to someone else, under your own name, saying where it came from.
   async forward(msg: Message, to: string, note: string): Promise<void> {

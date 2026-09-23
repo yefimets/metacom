@@ -381,10 +381,10 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (act) {
         const { msg, action } = act;
         if (action === "reply") {
+          // the same thing as clicking a name: address them and let you write
           const author = msg.from?.name;
-          if (author && author !== me) address(author);
-          editor.end();
-          editor.insert(`${editor.text && !editor.text.endsWith(" ") ? " " : ""}↩ re "${store.quote(msg)}": `);
+          const who = author && author !== me ? author : msg.to && msg.to !== me ? msg.to : null;
+          if (who) address(who);
           return refresh();
         }
         // forward: hold the message, ask who for, and send it on when the name is picked
