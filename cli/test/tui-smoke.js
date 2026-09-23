@@ -1,5 +1,5 @@
 'use strict';
-// Drives the chat in a pty against the running hub. Prints screens so a human can look too.
+// Drives the chat in a pty against the running mc. Prints screens so a human can look too.
 const { spawnChat, sleep } = require('./tui-driver.js');
 const { connect } = require('../lib/client.js');
 const config = require('../lib/config.js');
@@ -20,7 +20,7 @@ const main = async () => {
   await c.type('hello everyone');
   await c.wait(/hello everyone/);
   await c.type(c.key.enter);
-  await c.wait(/tester\s+hello everyone/);
+  await c.wait(/tester\s+\d\d:\d\d[\s\S]*hello everyone/);
   show('after say');
 
   await c.type('@');
@@ -30,7 +30,7 @@ const main = async () => {
   await c.type('run tests');
   show('directed draft');
   await c.type(c.key.enter);
-  await c.wait(/→ @Alex run tests/);
+  await c.wait(/→ Alex\s+\d\d:\d\d[\s\S]*run tests/);
   show('after command');
 
   // agent goes working then blocked, then done

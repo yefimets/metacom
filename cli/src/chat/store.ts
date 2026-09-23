@@ -62,7 +62,6 @@ export type State = {
   busy: string | null;
   attachments: Attachment[]; // files whose tokens may be in the draft
   mouse: boolean; // clicking a name on the status line addresses it (off: the terminal keeps selection)
-  epoch: number; // bumped when the log must be drawn again from scratch (resize, /clear)
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
@@ -117,7 +116,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], epoch: 0, mouse: process.env["MC_MOUSE"] !== "0" };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -430,7 +429,7 @@ export class Store {
         break;
       }
       case "clear":
-        this.set({ log: [], epoch: this.state.epoch + 1 });
+        this.set({ log: [] });
         break;
       case "quit":
       case "q":
@@ -442,12 +441,6 @@ export class Store {
     }
   }
 
-  /// Draw the recent log again from scratch. Ink's Static tracks items by count, so the log
-  /// itself is cut, never a view of it.
-  replay(keep: number): void {
-    this.lastMessage = null;
-    this.set({ log: this.state.log.slice(-keep), epoch: this.state.epoch + 1 });
-  }
 
   quit(): void {
     try {

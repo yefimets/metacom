@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { Box, Static, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize } from "ink";
+import { Box, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { ThemeProvider } from "@/providers/theme-provider";
@@ -38,12 +38,14 @@ const MODIFIED_ENTER = /\u001b\[(?:13|10);\d+(?::\d+)?u|\u001b\[27;\d+;(?:13|10)
 
 /// SGR mouse reporting (button press only) and the cursor-position report used to find where
 /// the status line is on screen. Both are written by the terminal, never typed by a person.
+const ALT_ON = "\u001b[?1049h\u001b[H";
+const ALT_OFF = "\u001b[?1049l";
+const WHEEL_LINES = 3;
 const MOUSE_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l";
 const MOUSE = /\u001b\[<(\d+);(\d+);(\d+)([Mm])/g;
-const CPR = /\u001b\[(\d+);(\d+)R/g;
 /// Everything written by the terminal rather than typed, so ink does not put it in the message.
-const REPORTS = /\u001b\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)/g;
+const REPORTS = /\u001b\[<\d+;\d+;\d+[Mm]/g;
 
 /// What the popup should show for the token at the cursor: members after `@`, commands
 /// after a leading `/`. The selection survives while the list stays the same.
@@ -128,9 +130,10 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       firstSize.current = false;
       return;
     }
+    // the window re-wraps itself; just clear what the old size left behind
     stdout.write("\u001B[2J\u001B[H");
-    store.replay(rows * 2);
-  }, [columns, rows, stdout, store]);
+    redraw();
+  }, [columns, rows, stdout, redraw]);
 
   const refresh = useCallback(() => {
     setPopup((p) => computePopup(editor, store.state.members, store.state.me.name, p));
@@ -148,6 +151,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     }
     const text = editor.submit();
     setPopup(EMPTY_POPUP);
+    toBottom();
     redraw();
     void store.submit(text).then((ok) => {
       // a refused message with files comes back into the input, so the tokens are not lost
@@ -165,13 +169,49 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const swallow = useRef("");
   const popupOpen = useRef(false);
   popupOpen.current = popup.kind !== null;
-  // Clicking a name on the status line puts @name into the input. The terminal reports the
-  // click in absolute rows, so the status line's own row is found by asking the terminal where
-  // the cursor is (it sits in the input, at a row this knows) and counting back from it.
+  // Clicking a name on the status line puts @name into the input. The frame fills the screen,
+  // so the status line is simply that many rows up from the bottom.
   const mouse = state.mouse;
   const clickState = useRef<{ text: string; cursor: number; width: number; room: string; members: Map<string, Member>; me: string }>({ text: "", cursor: 0, width: 0, room: "", members: new Map(), me: "" });
   clickState.current = { text: editor.text, cursor: editor.cursor, width: Math.max(30, columns - 1), room: state.room, members: state.members, me: state.me.name };
-  const pendingClick = useRef<{ row: number; col: number } | null>(null);
+  const rowsRef = useRef(0);
+  rowsRef.current = rows;
+
+  // MARK: the scrollback. The conversation lives in a window this draws, not in the terminal's
+  // own scrollback, so the input stays pinned at the bottom while the wheel moves the history.
+  const [offset, setOffset] = useState(0);
+  const follow = useRef(true);
+  const contentRef = useRef(null);
+  const viewRef = useRef(null);
+  const content = useBoxMetrics(contentRef);
+  const view = useBoxMetrics(viewRef);
+  const contentH = content.hasMeasured ? content.height : 0;
+  const viewH = view.hasMeasured ? view.height : 0;
+  const maxOffset = Math.max(0, contentH - viewH);
+  const gap = Math.max(0, viewH - contentH);
+  const maxRef = useRef(0);
+  maxRef.current = maxOffset;
+  const scrollBy = useCallback((lines: number) => {
+    setOffset((o) => {
+      const next = Math.max(0, Math.min(maxRef.current, o + lines));
+      follow.current = next >= maxRef.current;
+      return next;
+    });
+  }, []);
+  const toBottom = useCallback(() => {
+    follow.current = true;
+    setOffset(maxRef.current);
+  }, []);
+  // new lines arrive: stay at the bottom unless the reader has scrolled away from it
+  useEffect(() => {
+    if (follow.current) setOffset(maxOffset);
+  }, [maxOffset]);
+  useEffect(() => {
+    stdout.write(ALT_ON);
+    return () => {
+      stdout.write(ALT_OFF);
+    };
+  }, [stdout]);
   const liveRef = useRef(null);
   const live = useBoxMetrics(liveRef);
   const liveHeight = useRef(0);
@@ -184,25 +224,15 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     };
   }, [mouse, stdout]);
 
-  const onCursorReport = useCallback(
-    (cursorRow: number, cursorCol: number) => {
-      const click = pendingClick.current;
-      pendingClick.current = null;
-      if (!click) return;
-      const { text, cursor, width, room, members: list, me } = clickState.current;
+  const onClick = useCallback(
+    (row: number, col: number) => {
+      const { room, members: list, me } = clickState.current;
       const dbg = process.env["MC_CLICK_DEBUG"];
-      // where the terminal cursor sits inside the frame: status line, the box border, then the
-      // cursor's row of the input window — the same arithmetic the composer uses
-      const { rows: inputRows, cursor: at } = layout(text, cursor, Math.max(10, width - 6));
-      const top = inputRows.length > INPUT_ROWS ? Math.max(0, Math.min(at.row - INPUT_ROWS + 1, inputRows.length - INPUT_ROWS)) : 0;
-      // Two places the terminal cursor can be, and terminals differ: where the composer asked
-      // for it (inside the input) or parked just past the frame. Both give a candidate row for
-      // the status line; a click counts if it is on either, which can only ever tag a name the
-      // click was actually over.
-      const candidates = [cursorRow - (2 + (at.row - top)), cursorRow - liveHeight.current];
-      const hit = segments(room, list, me).find((s) => click.col - 1 >= s.start && click.col - 1 < s.end);
-      if (dbg) fs.appendFileSync(dbg, JSON.stringify({ click, cursorRow, cursorCol, liveHeight: liveHeight.current, candidates, hit }) + "\n");
-      if (!hit || !candidates.includes(click.row)) return;
+      // 1-based rows from the terminal; a frame one row shorter is tolerated
+      const statusRows = [rowsRef.current - liveHeight.current + 1, rowsRef.current - liveHeight.current];
+      const hit = segments(room, list, me).find((s) => col - 1 >= s.start && col - 1 < s.end);
+      if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, rows: rowsRef.current, liveHeight: liveHeight.current, statusRows, hit }) + "\n");
+      if (!hit || !statusRows.includes(row)) return;
       editor.set(editor.text.replace(/^@\S*\s*/, ""));
       editor.home();
       editor.insert(`@${hit.name} `);
@@ -223,20 +253,17 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         setTimeout(() => (swallow.current = ""), 0);
         MOUSE.lastIndex = 0;
         let click: RegExpExecArray | null = null;
+        let wheel = 0;
         for (let m = MOUSE.exec(seq); m; m = MOUSE.exec(seq)) {
-          // button 0 pressed, not a release and not the wheel (64 and up)
-          if (m[4] === "M" && Number(m[1]) === 0) {
-            click = m;
-            break;
-          }
+          const button = Number(m[1]);
+          if (m[4] !== "M") continue;
+          // 64 is the wheel up, 65 the wheel down; 0 is the left button
+          if (button === 64) wheel -= WHEEL_LINES;
+          else if (button === 65) wheel += WHEEL_LINES;
+          else if (button === 0 && !click) click = m;
         }
-        if (click) {
-          pendingClick.current = { row: Number(click[3]), col: Number(click[2]) };
-          stdout.write("\u001b[6n");
-        }
-        CPR.lastIndex = 0;
-        const report = CPR.exec(seq);
-        if (report) onCursorReport(Number(report[1]), Number(report[2]));
+        if (wheel) scrollBy(wheel);
+        if (click) onClick(Number(click[3]), Number(click[2]));
         return;
       }
       const hit = MODIFIED_ENTER.exec(seq);
@@ -257,7 +284,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     return () => {
       process.stdin.off("data", onData);
     };
-  }, [editor, refresh, stdout, onCursorReport]);
+  }, [editor, refresh, scrollBy, onClick]);
 
   // A pasted path to an image or document (a file dropped on the terminal) becomes its token.
   usePaste((text) => {
@@ -292,6 +319,10 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       }
       if (twice) editor.clear();
       return refresh();
+    }
+    if (key.pageUp || key.pageDown) {
+      scrollBy((key.pageUp ? -1 : 1) * Math.max(1, (view.hasMeasured ? view.height : rows) - 2));
+      return;
     }
     if (open && (key.upArrow || key.downArrow)) {
       const n = popup.items.length;
@@ -345,7 +376,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     else if (key.ctrl && input === "w") editor.deleteWordLeft();
     else if (key.ctrl && input === "l") {
       stdout.write("\u001B[2J\u001B[H");
-      store.replay(rows * 2);
+      redraw();
     } else if (key.meta && input === "b") editor.wordLeft();
     else if (key.meta && input === "f") editor.wordRight();
     else if (key.meta && input === "d") editor.deleteWordRight();
@@ -361,11 +392,16 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const footerRoom = rows - 3 - Math.min(6, editor.lines.length) - 3;
   const pending = store.pending(editor.text);
   return (
-    <Box flexDirection="column" width={columns}>
-      <Static key={state.epoch} items={state.log} style={{ flexDirection: "column", width: columns }}>
-        {(entry) => <EntryView key={entry.id} entry={entry} members={members} nameW={nameW} state={state} />}
-      </Static>
-      <Box ref={liveRef} flexDirection="column">
+    <Box flexDirection="column" width={columns} height={rows}>
+      <Box ref={viewRef} flexGrow={1} flexShrink={1} overflowY="hidden" flexDirection="column">
+        {/* short conversation: hug the bottom. long one: the offset scrolls it */}
+        <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
+          {state.log.map((entry) => (
+            <EntryView key={entry.id} entry={entry} members={members} nameW={nameW} state={state} />
+          ))}
+        </Box>
+      </Box>
+      <Box ref={liveRef} flexDirection="column" flexShrink={0}>
         <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} />
         <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} />
         {popup.kind ? <Popup popup={popup} room={footerRoom} /> : <Footer text={editor.text} busy={state.busy} members={members} room={state.room} attachments={pending.length} />}
