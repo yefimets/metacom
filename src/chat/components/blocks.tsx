@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { createRequire } from "node:module";
 import React from "react";
 
 import { Divider } from "@/components/ui/divider";
@@ -9,6 +10,11 @@ import { padToTerminalWidth, terminalWidth } from "@/lib/terminal-text";
 import { Glyph } from "@/chat/components/glyph";
 import { Name } from "@/chat/components/text";
 import { COMMANDS, type Member, type RoomSummary, stateOf } from "@/chat/store";
+
+const require = createRequire(import.meta.url);
+// which build is on screen: a running chat keeps the code it started with, so after an
+// update this is how you see whether the restart took
+const BUILD = (require("../../../lib/build.js") as { build: () => { label: string } }).build().label;
 
 /// The first thing on screen: where you are and the three things worth knowing.
 export const Banner = ({ room, url, me, role }: { room: string; url: string; me: string; role: string }) => {
@@ -25,6 +31,7 @@ export const Banner = ({ room, url, me, role }: { room: string; url: string; me:
         <Text color={muted}> at {url.replace(/\/$/, "")} as </Text>
         <Name name={me} />
         <Text color={muted}> ({role})</Text>
+        <Text color={muted}> · {BUILD}</Text>
       </Text>
       <Text color={muted} wrap="wrap">
         @Name to address an agent · / for commands · /help for keys

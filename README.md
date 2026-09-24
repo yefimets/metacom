@@ -144,6 +144,10 @@ metacom update            # git checkout: fast-forward the branch, npm install w
 metacom update --check    # only say what is waiting, and list the commits
 ```
 
+`metacom --version` prints the version and the commit it is running, and the chat's banner
+says the same — a running chat keeps the code it started with, so that is how you see whether
+a restart picked the update up.
+
 It never forces anything: a checkout with uncommitted changes, with commits of its own, or on
 a detached HEAD is reported and left for you. Restart the chat and any wrapped agents
 afterwards — a running agent keeps the code it started with.
