@@ -43,7 +43,7 @@ const main = async () => {
   await agent.api.agents.status({ status: 'working' });
   await sleep(100);
   await agent.api.agents.status({ status: 'waiting' });
-  await c.wait(/finished/);
+  await sleep(300);
   show('agent done');
 
   await c.type('/');

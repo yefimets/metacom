@@ -233,17 +233,14 @@ export class Store {
       const was = before.get(m.name);
       this.states.set(m.name, state);
       if (m.kind !== "agent") continue;
-      // The line above the input says only online, working or offline. Two things still have
-      // to reach the reader, so they arrive in the conversation instead: an agent stuck on a
-      // question, and one that has just finished what it was asked for.
+      // The line above the input says only online, working or offline. An agent stuck on a
+      // question still has to reach the reader, so that arrives in the conversation instead.
       const stuck = m.status === "blocked";
       if (stuck && this.marks.get(m.name) !== "blocked") {
         this.note(`${m.name} needs you${m.reason ? ": " + m.reason : ""}  ·  /read ${m.name}, then @${m.name} !keys y or @${m.name} !cancel`, "warn");
         this.onBell();
-      } else if (!stuck && m.attention && this.marks.get(m.name) !== "done") {
-        this.note(`${m.name} finished  ·  /read ${m.name}`, "ok");
       }
-      this.marks.set(m.name, stuck ? "blocked" : m.attention ? "done" : "");
+      this.marks.set(m.name, stuck ? "blocked" : "");
       if (!was || was === state) continue;
     }
   }
