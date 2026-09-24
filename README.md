@@ -19,6 +19,7 @@ Directories:
 | `metacom/` | clean upstream clone of metarhia/metacom (master, tests pass) |
 | `hub/` | the server: auth, rooms, agents, routing, phone web client (`hub/web`), Docker/Caddy deploy |
 | `cli/` | `metacom` command (alias `mc`): joins an agent or you to the hub; `cli/src/chat/` is the terminal chat (Ink + termcn) |
+| `banda-cli/` | **banda**, an alternative Rust room-first TUI/CLI with an optional persistent herdr bridge; does not replace `metacom` / `mc` |
 
 ## How it works
 
@@ -88,6 +89,95 @@ agents). What was taken, and what was deliberately not:
 | --- | --- | --- |
 | Buzz | one event log with kinds; owner gate on who may prompt an agent; control commands consumed by the harness, never shown to the model; agent-first CLI with JSON output (`--json`) | Nostr keys and signatures, Postgres/Redis/MinIO, workflows, git hosting: right for a company workspace, too heavy for one person's agents; the hub uses tokens and files |
 | herdr | `blocked` and `done` states classified from the bottom of the live screen; `agent read`, `agent wait`, `prompt --wait` with the `stalled` outcome; room rollups (working / blocked / done); the `starting` state so nothing is typed into a loading agent | detach and reattach: herdr owns the PTY in a background server, the `metacom` wrapper dies with its terminal. Run it inside tmux or herdr itself when you need that; native `claude --resume` on restart is a possible next step |
+
+## Banda: alternative Rust client
+
+`banda` is a separate client of this hub, not a rewrite of the JavaScript CLI.
+It uses a tnotes-inspired room/agent sidebar, a shared conversation, and explicit
+drilldown into an agent's real herdr terminal. The old `metacom` and `mc` commands
+remain usable independently.
+
+Requires Rust 1.98+ to build. Hub-only chat and commands do not need herdr; local
+agent management uses herdr 0.9.1 (socket protocol 22). Linux was exercised;
+the macOS process-identity path is implemented but has not been exercised.
+
+```bash
+cargo install --path banda-cli --locked
+banda --help
+banda --room dev
+
+# Reuses ~/.config/metacom-hub/config.json, or configure it:
+banda login ws://127.0.0.1:8900/ --token-stdin
+banda token laptop --role agent --save
+
+# A dedicated, persistent local agent:
+banda --room dev agent start Alex --kind claude --cwd .
+banda agent list
+banda agent attach Alex
+banda --room dev send Alex "Review the reconnect behavior"
+banda read Alex
+banda bridge status
+```
+
+Login reads one token line from stdin. Use a pipe or a non-echoing secret prompt
+if shell history/terminal echo is a concern. Managed agents require a separate
+**agent-role token**; Banda never falls back to passing an owner token to them.
+
+In the TUI: Enter sends, Alt+Enter / Ctrl+J inserts a newline, Tab cycles focus,
+Ctrl+B toggles navigation, Ctrl+P opens the picker, F1 opens help, and Ctrl+Q exits
+only the viewer. Mouse room switching preserves each room's draft. `/new`, `/bind`,
+`/read`, `/terminal`, and `/attach-file` expose the same local/runtime operations.
+
+The bridge owns hub delivery, not PTYs. Exiting the TUI or stopping the bridge
+does not stop herdr agents. `agent unbind` stops publishing a local binding without
+destroying its terminal. `agent stop` requests closing a still-verified **Banda-owned**
+terminal; arbitrary externally bound panes are not destroyed. Interactive attach
+returns with herdr's default Ctrl+B, then lowercase `q`.
+
+Run an updated hub from this repository for managed agents: executor/observer
+registration prevents duplicate writers, and directed messages carry a runtime
+identity. Do not run the old wrapper and Banda bridge for the same agent name.
+Unmanaged JavaScript-client identities keep their existing behavior.
+
+Runtime state defaults to `~/.local/state/banda`. `MC_CONFIG` and `MC_STATE_DIR`
+override the config file and state directory; existing `MC_HUB_URL`, `MC_TOKEN`,
+`MC_AGENT_TOKEN`, and `MC_ROOM` are supported. `MC_NAME`, `MC_HERDR_SESSION`, and
+`MC_HERDR_SOCKET` select the user/runtime context.
+Stop the bridge before switching its hub URL or agent token; an existing daemon
+rejects a different credential rather than silently launching an unusable binding.
+
+Delivery acknowledgement is not proof of task completion. Inspect uncertain
+delivery with `banda agent inspect NAME`; resolve a message explicitly with
+`banda agent resolve NAME MESSAGE_ID discard` or `retry --accept-duplicate-risk`.
+An inspect/resolve request may report that a delivery is in progress; wait for that
+operation to settle before inspecting again. A full local delivery journal applies
+backpressure: new messages remain pending at the hub while existing entries can
+still be resolved. The hub's inbox and history catch-up are each bounded to 500
+messages, so this is not a lossless queue or event log.
+Rooms are not security isolation, and herdr does not sandbox agent processes.
+Herdr has no atomic compare-and-submit operation: Banda checks process identity
+immediately before input, but cannot eliminate that native API's final race window.
+
+Architecture, reference findings, implementation steps, and verification:
+[Banda plan](docs/banda-plan.md). The Rust client is MIT-licensed in
+[`banda-cli/LICENSE`](banda-cli/LICENSE). Reference repositories are not dependencies.
+
+## Language server (omp)
+
+Project-local JavaScript/TypeScript LSP configuration lives in `.omp/lsp.json`. It uses
+the CLI's TypeScript 7 native server (`tsc --lsp --stdio`), including TSX support and
+the `@/*` aliases from `cli/tsconfig.json`; no global language-server install is needed.
+
+```bash
+npm ci --prefix cli
+omp
+```
+
+Start omp from the repository root so it discovers the configuration and resolves
+`cli/node_modules/.bin/tsc`. In an already-running session, reload the LSP configuration.
+JavaScript files use the same server without enabling project-wide `checkJs`.
+The root Cargo workspace also enables `rust-analyzer` for the alternative Rust client;
+install that rustup component if it is not already available.
 
 ## Setup on this Mac (done)
 

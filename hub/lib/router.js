@@ -12,7 +12,7 @@ const words = (text) => new Set((text.toLowerCase().match(WORD) || []));
 const heuristic = (text, members) => {
   const lower = text.toLowerCase();
   const tokens = words(text);
-  const candidates = members.filter((m) => m.kind === 'agent' && m.connected && m.status !== 'stopped' && m.status !== 'blocked');
+  const candidates = members.filter((m) => m.kind === 'agent' && m.connected && m.status !== 'stopped' && m.status !== 'blocked' && m.status !== 'unknown');
   if (candidates.length === 0) return null;
   const scored = candidates.map((m) => {
     let score = 0;
@@ -53,7 +53,7 @@ const heuristic = (text, members) => {
 
 /// Optional model-based pick through OpenRouter when the heuristic is not confident.
 const llmPick = async (text, members, { apiKey, model, fetchImpl = fetch }) => {
-  const candidates = members.filter((m) => m.kind === 'agent' && m.connected && m.status !== 'stopped' && m.status !== 'blocked');
+  const candidates = members.filter((m) => m.kind === 'agent' && m.connected && m.status !== 'stopped' && m.status !== 'blocked' && m.status !== 'unknown');
   if (candidates.length < 2) return null;
   const list = candidates
     .map((m) => `- ${m.name}: repo=${m.repo || '-'} caps=${(m.caps || []).join(',') || '-'} status=${m.status} host=${m.host || '-'}`)
