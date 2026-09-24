@@ -103,6 +103,11 @@ const main = async () => {
     process.stdout.write(usage);
     return;
   }
+  if (first === 'version' || first === '-v' || first === '--version') {
+    const { label } = require('../lib/build.js').build();
+    process.stdout.write(`metacom ${label}\n`);
+    return;
+  }
   if (first === 'login') {
     const [, url, token] = argv;
     if (!url || !token) throw new Error('usage: metacom login <url> <token>');
