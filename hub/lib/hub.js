@@ -9,7 +9,7 @@ const { route } = require('./router.js');
 const { fail } = require('./errors.js');
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
-const STATUSES = new Set(['starting', 'working', 'waiting', 'blocked', 'stopped']);
+const STATUSES = new Set(['starting', 'working', 'waiting', 'blocked', 'unknown', 'stopped']);
 const READY = new Set(['waiting', 'blocked', 'stopped']);
 const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
 const READ_TIMEOUT = 5_000;
@@ -63,6 +63,7 @@ class Hub {
     this.inbox = new Map(Object.entries(this.store.loadJson('inbox.json', {})));
     this.conns = new Map();
     this.byName = new Map();
+    this.executors = new Map();
     this.waiters = new Map();
     this.reads = new Map();
   }
@@ -84,10 +85,12 @@ class Hub {
     const set = this.byName.get(conn.name);
     if (set) {
       set.delete(client);
-      if (set.size > 0) return;
-      this.byName.delete(conn.name);
+      if (set.size === 0) this.byName.delete(conn.name);
     }
     const member = this.members.get(conn.name);
+    const executor = this.executors.get(conn.name) === client;
+    if (executor) this.executors.delete(conn.name);
+    if (member?.executorId ? !executor : member && this.executionClients(member).length > 0) return;
     if (member && member.connected) {
       member.connected = false;
       member.status = 'stopped';
@@ -148,14 +151,45 @@ class Hub {
     const kind = info.kind || 'agent';
     if (!KINDS.has(kind)) throw fail(400, 'kind must be agent or human');
     if (kind === 'human' && conn.record.role !== 'owner') throw fail(403, 'Only owner tokens join as humans');
+    if (conn.name && conn.name !== name) throw fail(409, 'Use a new connection for another identity');
+    if (info.mode !== undefined && info.mode !== 'observer') throw fail(400, 'mode must be observer');
     let member = this.members.get(name);
     if (member && member.tokenId !== conn.record.id && conn.record.role !== 'owner') {
       throw fail(403, `"${name}" belongs to another token`);
+    }
+    if (info.mode === 'observer') {
+      if (!member) throw fail(404, `No agent named "${name}"; register its executor first`);
+      if (this.executors.get(name) === conn.client) throw fail(409, 'An executor cannot become an observer');
+      conn.name = name;
+      conn.room = member.room;
+      conn.observer = true;
+      if (!this.byName.has(name)) this.byName.set(name, new Set());
+      this.byName.get(name).add(conn.client);
+      return this.publicMember(member);
+    }
+    const managed = info.executorId !== undefined || info.runId !== undefined;
+    if (managed) {
+      if (kind !== 'agent' || ![info.executorId, info.runId].every((v) => typeof v === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(v))) {
+        throw fail(400, 'Agent executorId and runId must be nonempty identifiers, up to 128 characters');
+      }
+      const active = this.executors.get(name);
+      if (active && active !== conn.client) throw fail(409, `"${name}" already has an active executor`);
+      const legacy = [...(this.byName.get(name) || [])].some((client) => client !== conn.client && !this.conns.get(client)?.observer);
+      if (!active && legacy) throw fail(409, `"${name}" already has a legacy runtime; disconnect it before binding`);
+    } else if (member?.executorId) {
+      throw fail(409, `"${name}" is managed; register an executor or an observer`);
     }
     if (!member) {
       member = { name, kind, tokenId: conn.record.id, since: now(), status: 'starting' };
       this.members.set(name, member);
     }
+    if (managed) {
+      if (member.runId !== info.runId) member.turnPending = false;
+      member.executorId = info.executorId;
+      member.runId = info.runId;
+      this.executors.set(name, conn.client);
+    }
+    conn.observer = false;
     member.kind = kind;
     if (info.room !== undefined) member.room = String(info.room).slice(0, 64);
     if (!member.room) member.room = 'default';
@@ -170,7 +204,6 @@ class Hub {
     member.attention = false;
     member.reason = null;
     member.lastSeen = now();
-    if (conn.name && conn.name !== name) this.unbind(conn.client);
     conn.name = name;
     conn.room = member.room;
     if (!this.byName.has(name)) this.byName.set(name, new Set());
@@ -182,12 +215,29 @@ class Hub {
     return this.publicMember(member);
   }
 
+  assertExecutor(conn) {
+    const member = this.members.get(conn.name);
+    if (conn.observer || (member?.executorId && this.executors.get(conn.name) !== conn.client)) {
+      throw fail(403, 'Only the active executor may change execution state');
+    }
+  }
+
+  executionClients(member) {
+    if (member.executorId) {
+      const client = this.executors.get(member.name);
+      return client ? [client] : [];
+    }
+    return [...(this.byName.get(member.name) || [])].filter((client) => !this.conns.get(client)?.observer);
+  }
+
   setStatus(conn, status, reason = null) {
     if (!conn.name) throw fail(400, 'Register first');
     if (!STATUSES.has(status)) throw fail(400, `status must be one of ${[...STATUSES].join(', ')}`);
+    this.assertExecutor(conn);
     const member = this.members.get(conn.name);
-    member.reason = reason ? String(reason).slice(0, 120) : null;
-    if (member.status === status) return this.publicMember(member);
+    const nextReason = reason ? String(reason).slice(0, 120) : null;
+    if (member.status === status && member.reason === nextReason) return this.publicMember(member);
+    member.reason = nextReason;
     const before = member.status;
     member.status = status;
     member.lastSeen = now();
@@ -249,8 +299,8 @@ class Hub {
     this.owner(conn);
     const member = this.members.get(String(name || ''));
     if (!member) throw fail(404, `No agent named "${name}"`);
-    const clients = this.byName.get(member.name);
-    if (!member.connected || !clients || clients.size === 0) throw fail(409, `${member.name} is offline`);
+    const clients = this.executionClients(member);
+    if (!member.connected || clients.length === 0) throw fail(409, `${member.name} is offline`);
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -266,6 +316,7 @@ class Hub {
     const pending = this.reads.get(id);
     if (!pending) return { accepted: false };
     if (pending.name !== conn.name) throw fail(403, 'Not your read');
+    this.assertExecutor(conn);
     clearTimeout(pending.timer);
     this.reads.delete(id);
     pending.resolve({ name: pending.name, text: String(text ?? '').slice(0, 64_000) });
@@ -279,13 +330,13 @@ class Hub {
   }
 
   publicMember(m) {
-    const { name, kind, room, repo, caps = [], host, command, status, connected, since, lastSeen, attention, reason, accept } = m;
-    return { name, kind, room, repo, caps, host, command, status, connected: Boolean(connected), since, lastSeen, attention: Boolean(attention), reason: reason || null, accept: kind === 'agent' ? accept || 'owner' : undefined };
+    const { name, kind, room, repo, caps = [], host, command, status, connected, since, lastSeen, attention, reason, accept, runId } = m;
+    return { name, kind, room, repo, caps, host, command, status, connected: Boolean(connected), since, lastSeen, attention: Boolean(attention), reason: reason || null, accept: kind === 'agent' ? accept || 'owner' : undefined, runId };
   }
 
   saveMembers() {
-    const list = [...this.members.values()].map(({ name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen }) => ({
-      name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen,
+    const list = [...this.members.values()].map(({ name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen, executorId, runId }) => ({
+      name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen, executorId, runId,
     }));
     this.store.saveJson('members.json', list);
   }
@@ -330,14 +381,15 @@ class Hub {
       throw fail(409, `${member.name} is blocked on a question; answer it (metacom read/!keys) or send !cancel first`);
     }
     const msg = { id: id(), ts: now(), room: member.room, kind, from: this.from(conn), to: member.name, text: body };
+    if (member.runId) msg.runId = member.runId;
     if (files) msg.media = files;
     this.pushInbox(member.name, msg);
     this.store.appendRoom(member.room, msg);
     this.broadcast('room/message', msg, member.room);
-    const clients = this.byName.get(member.name) || new Set();
+    const clients = this.executionClients(member);
     for (const client of clients) this.emit(client, 'agents/message', msg);
     if (kind === 'command' && conn.record.role === 'owner') member.turnPending = true;
-    const result = { id: msg.id, to: member.name, kind, delivered: clients.size > 0, queued: !clients.size };
+    const result = { id: msg.id, to: member.name, kind, delivered: clients.length > 0, queued: clients.length === 0 };
     if (downgraded) result.downgraded = true;
     if (wait && result.delivered && kind === 'command') result.turn = await this.observeTurn(member, wait);
     return result;
@@ -394,6 +446,7 @@ class Hub {
 
   ack(conn, ids) {
     if (!conn.name) throw fail(400, 'Register first');
+    this.assertExecutor(conn);
     const drop = new Set(Array.isArray(ids) ? ids : [ids]);
     const list = (this.inbox.get(conn.name) || []).filter((m) => !drop.has(m.id));
     this.inbox.set(conn.name, list);

@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "typescript-native": {
+      "command": "./cli/node_modules/.bin/tsc",
+      "args": ["--lsp", "--stdio"],
+      "fileTypes": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+      "rootMarkers": ["tsconfig.json", "jsconfig.json", "package.json", ".omp"]
+    },
+    "rust-analyzer": {
+      "command": "rust-analyzer",
+      "fileTypes": [".rs"],
+      "rootMarkers": ["Cargo.toml", ".omp"]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+[workspace]
+members = ["banda-cli"]
+resolver = "3"
+
+[profile.release]
+lto = "thin"
+strip = true
