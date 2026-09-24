@@ -66,6 +66,12 @@ sentence it stays part of what you wrote; with no mention the message goes to th
 `/attach`, `/theme` (default, catppuccin, dracula, github, gruvbox, nord, one-dark, rose-pine,
 solarized, tokyo-night). `--plain` is a readline version for pipes.
 
+**Markdown.** Agents write in it, so the chat draws it: headings and `**bold**` in bold,
+`` `code` `` in the accent colour, numbered and bulleted lists with a hanging indent so a long
+step stays a block, `>` quotes and `---` rules muted, fenced blocks kept verbatim. The marks
+themselves come off, and what is left is exactly what a selection copies. The whole chat keeps
+a two-column gutter down its left, so nothing starts hard against the terminal edge.
+
 Enter sends; **shift+enter**, option+enter, ctrl+j or a trailing `\` start a new line. A
 plain terminal reports shift+enter as an ordinary carriage return, so the chat turns on the
 kitty keyboard protocol to tell them apart; where that is not supported (Terminal.app), use

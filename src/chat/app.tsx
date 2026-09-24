@@ -11,7 +11,8 @@ import { Composer, INPUT_ROWS, layout } from "@/chat/components/composer";
 import { Footer } from "@/chat/components/footer";
 import { SPIN_INTERVAL } from "@/chat/components/glyph";
 import { MessageLine, actionAt, bodyOf, type Action } from "@/chat/components/message";
-import { type Selection, isEmpty, textOf, wrapLines } from "@/chat/selection";
+import { type Selection, isEmpty, textOf } from "@/chat/selection";
+import { bodyTextLines } from "@/chat/markdown";
 import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
@@ -99,12 +100,15 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
 /// against each other and only the last of them takes the line of air.
 const isSystem = (entry?: Entry): boolean => entry?.type === "message" && entry.msg.kind === "system";
 
-const EntryView = ({ entry, members, nameW, state, width, bodyTop, selection }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; width: number; bodyTop: number; selection: Selection | null }) => {
+/// The chat keeps a gutter down its left, so nothing starts hard against the terminal edge.
+const GUTTER = 2;
+
+const EntryView = ({ entry, members, nameW, state, width, body, selection }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; width: number; body: { top: number; left: number }; selection: Selection | null }) => {
   switch (entry.type) {
     case "banner":
       return <Banner room={state.room} url={state.url} me={state.me.name} role={state.me.role} />;
     case "message":
-      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} width={width} top={bodyTop} selection={selection} />;
+      return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} width={width} top={body.top} left={body.left} selection={selection} />;
     case "note":
       return <Note text={entry.text} tone={entry.tone} />;
     case "rule":
@@ -208,7 +212,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const mouseRef = useRef(mouse);
   mouseRef.current = mouse;
   const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[]; width: number }>({ room: "", members: new Map(), me: "", log: [], width: 80 });
-  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log, width: columns };
+  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log, width: columns - GUTTER };
 
   // MARK: the scrollback. The conversation lives in a window this draws, not in the terminal's
   // own scrollback, so the input stays pinned at the bottom while the wheel moves the history.
@@ -286,26 +290,29 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       const body = kids[kids.length - 2];
       if (!body?.yogaNode) continue;
       const at = screenAt(body);
-      wrapLines(bodyOf(entry.msg.text), width).forEach((text, n) => out.push({ row: at.top + n + 1, left: at.left, text }));
+      bodyTextLines(bodyOf(entry.msg.text), width).forEach((text, n) => out.push({ row: at.top + n + 1, left: at.left, text }));
     }
     return out;
   }, []);
 
   /// Where each message's body starts on screen, so the lines can draw their own selection.
-  const [bodyTops, setBodyTops] = useState<Record<string, number>>({});
+  const [bodyTops, setBodyTops] = useState<Record<string, { top: number; left: number }>>({});
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
-    const next: Record<string, number> = {};
+    const next: Record<string, { top: number; left: number }> = {};
     for (const [i, child] of content.childNodes.entries()) {
       const entry = clickState.current.log[i];
       if (entry?.type !== "message" || entry.msg.kind === "system") continue;
       const inner = ((child as DOMElement).childNodes[0] as DOMElement | undefined) ?? (child as DOMElement);
       const kids = inner.childNodes as unknown as DOMElement[];
       const body = kids[kids.length - 2];
-      if (body?.yogaNode) next[entry.id] = screenAt(body).top + 1;
+      if (body?.yogaNode) {
+        const at = screenAt(body);
+        next[entry.id] = { top: at.top + 1, left: at.left };
+      }
     }
-    setBodyTops((prev) => (Object.keys(next).every((k) => prev[k] === next[k]) && Object.keys(prev).length === Object.keys(next).length ? prev : next));
+    setBodyTops((prev) => (Object.keys(next).every((k) => prev[k]?.top === next[k]!.top && prev[k]?.left === next[k]!.left) && Object.keys(prev).length === Object.keys(next).length ? prev : next));
   });
 
   /// The message whose action row was clicked, and which action. The entry's last child is
@@ -402,8 +409,9 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (name) return address(name);
       const dbg = process.env["MC_CLICK_DEBUG"];
       // the status line is the first row of the live area; the terminal counts rows from 1
-      const statusRow = screenAt(liveRef.current).top + 1;
-      const hit = segments(room, list, me).find((s) => col - 1 >= s.start && col - 1 < s.end);
+      const liveBox = screenAt(liveRef.current);
+      const statusRow = liveBox.top + 1;
+      const hit = segments(room, list, me).find((s) => col - 1 - liveBox.left >= s.start && col - 1 - liveBox.left < s.end);
       if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, statusRow, hit }) + "\n");
       if (!hit || row !== statusRow) return;
       address(hit.name);
@@ -601,14 +609,14 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   // which keeps Ink placing the terminal cursor (it only does so on renders the composer joins).
   const frame = useAnimation({ intervalMs: SPIN_INTERVAL, isActive: store.working });
   const nameW = useMemo(() => Math.min(14, Math.max(6, ...[...members.values()].map((m) => terminalWidth(m.name)))), [members]);
-  const width = Math.max(30, columns - 1);
+  const width = Math.max(30, columns - GUTTER - 1);
   const footerRoom = rows - 3 - Math.min(6, editor.lines.length) - 3;
   const pending = store.pending(editor.text);
   return (
     // One row short of the window: Ink 7.1 treats a frame that fills the screen as fullscreen,
     // drops its final newline and then miscounts by a row, so the terminal cursor lands above the
     // input and the bottom line is never cleared before a redraw.
-    <Box flexDirection="column" width={columns} height={rows - 1}>
+    <Box flexDirection="column" width={columns} height={rows - 1} paddingLeft={GUTTER}>
       <Box ref={viewRef} flexGrow={1} flexShrink={1} overflowY="hidden" flexDirection="column">
         {/* short conversation: hug the bottom. long one: the offset scrolls it */}
         <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
@@ -617,7 +625,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
             // a message ends with a line of air, so the action row does not touch what follows;
             // a joined/left line only when the next line is not another one of them
             <Box key={entry.id} flexDirection="column" flexShrink={0} marginBottom={entry.type === "message" && !(isSystem(entry) && isSystem(state.log[i + 1])) ? 1 : 0}>
-              <EntryView entry={entry} members={members} nameW={nameW} state={state} width={columns} bodyTop={bodyTops[entry.id] ?? -1000} selection={selection} />
+              <EntryView entry={entry} members={members} nameW={nameW} state={state} width={columns - GUTTER} body={bodyTops[entry.id] ?? { top: -1000, left: 0 }} selection={selection} />
             </Box>
           ))}
         </Box>
