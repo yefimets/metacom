@@ -95,6 +95,10 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
   return { kind, items, index: same ? previous.index : 0, query };
 };
 
+/// A joined/left line. They come in runs, and a run reads as one notice, so they sit tight
+/// against each other and only the last of them takes the line of air.
+const isSystem = (entry?: Entry): boolean => entry?.type === "message" && entry.msg.kind === "system";
+
 const EntryView = ({ entry, members, nameW, state, width, bodyTop, selection }: { entry: Entry; members: Map<string, Member>; nameW: number; state: Store["state"]; width: number; bodyTop: number; selection: Selection | null }) => {
   switch (entry.type) {
     case "banner":
@@ -609,10 +613,10 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         {/* short conversation: hug the bottom. long one: the offset scrolls it */}
         <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
           {/* one box per entry, so a click can be traced back to its entry */}
-          {state.log.map((entry) => (
-            // every message ends with a line of air, a joined/left line as much as a said one,
-            // so the action row does not touch what follows and the feed reads as separate turns
-            <Box key={entry.id} flexDirection="column" flexShrink={0} marginBottom={entry.type === "message" ? 1 : 0}>
+          {state.log.map((entry, i) => (
+            // a message ends with a line of air, so the action row does not touch what follows;
+            // a joined/left line only when the next line is not another one of them
+            <Box key={entry.id} flexDirection="column" flexShrink={0} marginBottom={entry.type === "message" && !(isSystem(entry) && isSystem(state.log[i + 1])) ? 1 : 0}>
               <EntryView entry={entry} members={members} nameW={nameW} state={state} width={columns} bodyTop={bodyTops[entry.id] ?? -1000} selection={selection} />
             </Box>
           ))}
