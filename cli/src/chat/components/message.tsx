@@ -3,8 +3,9 @@ import React from "react";
 
 import { useTheme } from "@/hooks/use-theme";
 import { splitGraphemes, terminalWidth } from "@/lib/terminal-text";
-import { type Selection, sliceOf, wrapLines } from "@/chat/selection";
-import { Highlighted, Name } from "@/chat/components/text";
+import { type Selection, sliceOf } from "@/chat/selection";
+import { type Line, type Span, renderBody } from "@/chat/markdown";
+import { Name } from "@/chat/components/text";
 import { nameColor } from "@/chat/palette";
 import type { Member, Message } from "@/chat/store";
 
@@ -43,12 +44,39 @@ export const time = (ts: string): string => {
 /// A room message in two lines: who and when on top, the text below at full width. Consecutive
 /// messages from one sender drop the header, so a burst reads as one block. Directed messages
 /// carry an arrow to the recipient; control commands are set apart in the accent colour.
+/// One span of a drawn line, in the colour its markdown asks for.
+const SpanText = ({ span }: { span: Span }) => {
+  const theme = useTheme();
+  const tone =
+    span.tone === "code"
+      ? theme.colors.accent
+      : span.tone === "mention"
+        ? nameColor(span.name ?? span.text.replace(/^@/, ""))
+        : span.tone === "muted" || span.tone === "rule"
+          ? theme.colors.mutedForeground
+          : undefined;
+  return (
+    <Text color={tone} bold={span.bold || span.tone === "mention"} italic={span.italic}>
+      {span.text}
+    </Text>
+  );
+};
+
 /// One line of a message body. A selected part is drawn inverse, which is how a terminal
-/// shows its own selection, so a drag looks the way it does everywhere else.
-const BodyLine = ({ text, row, left, selection, plain }: { text: string; row: number; left: number; selection: Selection | null; plain: boolean }) => {
-  const slice = sliceOf(selection, row, left, text);
-  if (!slice) return plain ? <Text>{text}</Text> : <Highlighted text={text} members={new Map()} />;
-  const g = splitGraphemes(text);
+/// shows its own selection, so a drag looks the way it does everywhere else; the styling
+/// steps aside while it is selected, because a terminal shows one selection colour.
+const BodyLine = ({ line, row, left, selection }: { line: Line; row: number; left: number; selection: Selection | null }) => {
+  const slice = sliceOf(selection, row, left, line.text);
+  if (!slice) {
+    return (
+      <Text>
+        {line.spans.map((span, i) => (
+          <SpanText key={i} span={span} />
+        ))}
+      </Text>
+    );
+  }
+  const g = splitGraphemes(line.text);
   return (
     <Text>
       {g.slice(0, slice.from).join("")}
@@ -58,7 +86,7 @@ const BodyLine = ({ text, row, left, selection, plain }: { text: string; row: nu
   );
 };
 
-export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, selection = null }: { msg: Message; grouped: boolean; members: Map<string, Member>; width?: number; top?: number; selection?: Selection | null; nameW?: number }) => {
+export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, left = 0, selection = null }: { msg: Message; grouped: boolean; members: Map<string, Member>; width?: number; top?: number; left?: number; selection?: Selection | null; nameW?: number }) => {
   const theme = useTheme();
   const muted = theme.colors.mutedForeground;
   if (msg.kind === "system") {
@@ -98,13 +126,16 @@ export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, select
         </Text>
       )}
       <Box flexDirection="column">
-        {wrapLines(body, width).map((line, i) =>
-          control ? (
+        {renderBody(body, width, (name) => members.has(name)).map((line, i) =>
+          // a blank line the author wrote is a row of its own: an empty Text has no height
+          line.text === "" ? (
+            <Box key={i} height={1} />
+          ) : control ? (
             <Text key={i} color={theme.colors.accent}>
-              {line}
+              {line.text}
             </Text>
           ) : (
-            <BodyLine key={i} text={line} row={top + i} left={0} selection={selection} plain={false} />
+            <BodyLine key={i} line={line} row={top + i} left={left} selection={selection} />
           )
         )}
         {files.length > 0 && (
