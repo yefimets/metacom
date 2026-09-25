@@ -30,7 +30,7 @@ const main = async () => {
   // HOME: an empty one, so the chats use this hub's token and not the one `metacom login` saved
   const env = { HOME: dir, MC_HUB_URL: `ws://127.0.0.1:${port}/`, MC_TOKEN: token, MC_MOUSE: '1' };
   const a = spawnChat({ room: 'call', name: 'ann', cols: 80, rows: 16, env: { ...env, MC_VOICE_REC: tone, MC_VOICE_PLAY: `cat > ${path.join(dir, 'ann-heard.raw')}` } });
-  const b = spawnChat({ room: 'call', name: 'bob', cols: 80, rows: 16, env: { ...env, MC_VOICE_REC: 'sleep 60', MC_VOICE_PLAY: `cat > ${heard}` } });
+  const b = spawnChat({ room: 'call', name: 'bob', cols: 80, rows: 26, env: { ...env, MC_VOICE_REC: 'sleep 60', MC_VOICE_PLAY: `cat > ${heard}` } });
   const show = (c, title) => console.log(`\n=== ${title} ===\n${c.dump().replace(/\n+$/, '')}\n`);
   try {
     await a.wait(/@ for agents/, 8000);

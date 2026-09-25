@@ -102,6 +102,59 @@ test('voice: a lump of audio from a recorder that delivers a second at a time is
   audio.close();
 });
 
+test('voice: a connection that delivers a second at a time, sometimes late, plays without a break once learned', () => {
+  const { spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  let dry = 0;
+  try {
+    let next = t;
+    for (let lump = 0; t < next + 12_000 && lump < 12; ) {
+      if (t >= next) {
+        for (let i = 0; i < 25; i++) audio.play('roma', tone(1000).toString('base64'));
+        lump++;
+        next += lump % 3 === 0 ? 1150 : 1000; // every third lump 150 ms late
+        clearInterval(audio.timer);
+      }
+      audio.tick(t);
+      // after the first few lumps the buffer has learned: roma's queue must not run dry
+      if (lump > 3 && lump < 12 && !audio.queues.has('roma')) dry++;
+      t += 20;
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  assert.strictEqual(dry, 0, 'no break in the speech');
+  assert.ok(audio.target('roma') >= 16000 * 2 * 0.9, `buffer grew to ${Math.round(audio.target('roma') / 32)} ms`);
+  assert.strictEqual(audio.stats.dropped, 0);
+  audio.close();
+});
+
+test('voice: pauses in the talk and the pre-roll after them do not grow the buffer', () => {
+  const { spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  try {
+    for (let sentence = 0; sentence < 5; sentence++) {
+      for (let i = 0; i < 5; i++) audio.play('eve', tone(1000).toString('base64')); // pre-roll, at once
+      for (let i = 0; i < 40; i++) {
+        t += 40;
+        audio.play('eve', tone(1000).toString('base64'));
+      }
+      t += 1200; // a pause between sentences
+    }
+    clearInterval(audio.timer);
+  } finally {
+    Date.now = realNow;
+  }
+  assert.strictEqual(Math.round(audio.target('eve') / 32), 80, 'a steady connection keeps the short buffer');
+  audio.close();
+});
+
 test('voice: a speaker who stays ahead of real time is cut back, not played ever later', () => {
   const { spawner } = fakeSpawner();
   const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });

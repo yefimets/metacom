@@ -567,15 +567,39 @@ const captured = (input) => {
   }
 };
 
+// How unevenly each speaker's audio arrives: a connection that stalls and then delivers a second
+// at once needs that much in hand, a steady one 80 ms. A stall shows in the lump after it; the
+// few frames of pre-roll after a pause in the talk (up to 240 ms) do not count. The largest lump
+// in the last 10 s, within 80 ms .. 1.2 s — the same rule as the terminal (cli/lib/voice.js).
+const jitter = new Map();
+const bufferFor = (from) => {
+  const j = jitter.get(from);
+  if (!j || !j.lumps.length) return 0.08;
+  return Math.min(1.2, Math.max(0.08, Math.max(...j.lumps.map((l) => l.late)) / 1000));
+};
+
 const heard = ({ room, from, data }) => {
   if (!call.ctx || room !== call.room) return;
+  const t = performance.now();
+  const j = jitter.get(from) || { lumps: [], last: 0, run: 0, runGap: 0 };
+  const secs = (data.length * 3) / 4 / 2 / VOICE_RATE;
+  if (t - j.last < 10) j.run += secs;
+  else {
+    j.run = secs;
+    j.runGap = (t - j.last) / 1000;
+  }
+  if (j.run - secs > 0.24) j.lumps.push({ at: t, late: Math.min(j.runGap, j.run - secs) * 1000 });
+  j.lumps = j.lumps.filter((l) => t - l.at < 10000);
+  j.last = t;
+  jitter.set(from, j);
+  const target = bufferFor(from);
   const now = call.ctx.currentTime;
   let at = call.next.get(from) || 0;
-  // more than 250 ms queued (a stall, then a burst): drop frames until it is back, rather
-  // than keep the whole call that far behind
-  if (at > now + 0.25) return;
-  // ran dry: start again 80 ms out, room for the next frames' jitter
-  if (at < now + 0.01) at = now + 0.08;
+  // far more queued than this speaker's jitter needs (it is really ahead): drop frames until
+  // it is back, rather than keep the whole call that far behind
+  if (at > now + Math.max(0.25, 2 * target + 0.3)) return; // a buffer, a lump on top, and slack
+  // ran dry: start again one buffer out
+  if (at < now + 0.01) at = now + target;
   const pcm = fromBase64(data);
   const buf = call.ctx.createBuffer(1, pcm.length, VOICE_RATE);
   const ch = buf.getChannelData(0);

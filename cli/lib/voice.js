@@ -23,6 +23,15 @@ const STANDING_LAG = ms(300);
 const LAG_WINDOW = 2000;
 const KEEP_LAG = ms(150);
 const HARD_LAG = ms(2000);
+// The buffer a speaker gets before playing follows how unevenly their audio arrives: a
+// connection that stalls and then delivers a second at once needs a second in hand, a steady
+// one only PREBUFFER. What tells a stall is the lump after it: audio that should have come over
+// the last second arrives in one go. A pause in the talk is followed only by the sender's
+// pre-roll (a few frames), so lumps up to LUMP_IGNORE bytes are not counted. The buffer is the
+// largest lump over the last JITTER_WINDOW_MS, within bounds.
+const JITTER_MAX_MS = 1200;
+const JITTER_WINDOW_MS = 10_000;
+const LUMP_IGNORE = ms(240);
 // After the last voice, the player is fed silence this long: sox plays nothing until its buffer
 // (8 KB, 256 ms, where a smaller one is refused) is full, so without it the end of a sentence
 // would wait inside sox until someone spoke again.
@@ -299,6 +308,7 @@ class Audio extends EventEmitter {
     this.timer = null;
     this.clock = null; // { t0, written } while the player is fed
     this.lastVoice = 0;
+    this.jitter = new Map(); // speaker -> { gaps, last }: how unevenly their audio arrives
     this.inRate = RATE; // what the recorder really gives, once measured
     this.rs = {}; // resampler state
     this.cap = { t0: 0, bytes: 0, maxChunk: 0, decided: false, hz: 0 };
@@ -379,13 +389,13 @@ class Audio extends EventEmitter {
       return;
     }
     m.maxChunk = Math.max(m.maxChunk, chunk.length);
-    if (m.decided) return;
     m.bytes += chunk.length;
     const secs = (now - m.t0) / 1000;
     if (secs < 2) return;
-    m.decided = true;
     const hz = m.bytes / 2 / secs;
-    m.hz = Math.round(hz);
+    m.hz = Math.round(hz); // over the whole call, for /voice stats
+    if (m.decided) return;
+    m.decided = true;
     const near = RATES.reduce((a, b) => (Math.abs(b - hz) < Math.abs(a - hz) ? b : a));
     if (near !== RATE && Math.abs(hz / near - 1) < 0.1) {
       this.inRate = near;
@@ -408,6 +418,7 @@ class Audio extends EventEmitter {
       `heard   ${this.stats.frames} frames, ${kb(this.stats.bytes)} (${(this.stats.bytes / (RATE * 2)).toFixed(1)} s of voice)`,
       `dropped ${kb(this.stats.dropped)} to catch up · ${this.stats.gaps} gaps over 200 ms while someone spoke`,
       `arrives ${this.stats.activeMs ? ((this.stats.activeBytes / (RATE * 2)) / (this.stats.activeMs / 1000)).toFixed(2) : '-'}x real time · up to ${this.stats.burst} frames at once`,
+      `buffer  ${[...this.jitter.keys()].map((n) => `${n} ${Math.round((this.target(n) / (RATE * 2)) * 1000)} ms`).join(' · ') || '-'} (grows for a connection that arrives in lumps)`,
       `mic in  ${this.cap.hz ? this.cap.hz + ' Hz measured' : 'measuring'}${this.inRate !== RATE ? ', converted from ' + this.inRate : ''} · up to ${Math.round(this.cap.maxChunk / (RATE * 2) * 1000)} ms per read`,
       `sent    ${this.stats.sent} frames from this mic · gate ${Math.round(this.shaper.threshold)} · gain ${this.shaper.gain.toFixed(1)}x`,
       `player  ${cmd(this.player)}${this.broken.player ? ' · broken' : ''} (way ${this.variant.player + 1})`,
@@ -456,7 +467,22 @@ class Audio extends EventEmitter {
       st.activeBytes += bytes.length;
     }
     this.lastArrival = now;
-    if (q.buf.length > HARD_LAG) {
+    const j = this.jitter.get(from) || { lumps: [], last: 0, run: 0, runGap: 0 };
+    if (now - j.last < 10) j.run += bytes.length;
+    else {
+      j.run = bytes.length;
+      j.runGap = now - j.last;
+    }
+    // the audio in a lump beyond its first frame came late by about that much (never by more
+    // than the silence before it)
+    const late = Math.min(j.runGap, ((j.run - bytes.length) / (RATE * 2)) * 1000);
+    if (j.run - bytes.length > LUMP_IGNORE) j.lumps.push({ at: now, late });
+    j.lumps = j.lumps.filter((l) => now - l.at < JITTER_WINDOW_MS);
+    j.last = now;
+    this.jitter.set(from, j);
+    if (!q.playing && !q.startAt) q.startAt = now + (this.target(from) / (RATE * 2)) * 1000;
+    const hard = Math.max(HARD_LAG, this.target(from) * 2);
+    if (q.buf.length > hard) {
       st.dropped += q.buf.length - KEEP_LAG;
       q.buf = q.buf.subarray(q.buf.length - KEEP_LAG);
     }
@@ -466,11 +492,20 @@ class Audio extends EventEmitter {
     if (!this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
   }
 
+  /// Bytes to hold for this speaker before playing them: see JITTER_MAX_MS.
+  target(from) {
+    const j = this.jitter.get(from);
+    if (!j || !j.lumps.length) return PREBUFFER;
+    return Math.min(ms(JITTER_MAX_MS), Math.max(PREBUFFER, ms(Math.max(...j.lumps.map((l) => l.late)))));
+  }
+
   /// Feed the player what wall time says is due since it started, so a late timer catches up
   /// instead of letting the delay grow. Nothing to play: stop the clock, let the player drain.
   tick(now = Date.now()) {
     // a speaker starts once it has enough buffered, or once nothing more is coming
-    const live = [...this.queues.entries()].filter(([, q]) => q.playing || q.buf.length >= PREBUFFER || now - q.last > 100);
+    // a speaker starts one buffer after their first frame came: whatever arrives up to that
+    // late still plays in its place
+    const live = [...this.queues.entries()].filter(([, q]) => q.playing || now >= q.startAt);
     const flushing = this.clock && now - this.lastVoice < FLUSH_MS;
     if (!live.length && !flushing) {
       this.clock = null;
@@ -493,8 +528,9 @@ class Audio extends EventEmitter {
       if (!q.lowSince) q.lowSince = now;
       q.low = Math.min(q.low, q.buf.length);
       if (now - q.lowSince >= LAG_WINDOW) {
-        if (q.low > STANDING_LAG) {
-          const cut = Math.min(q.low - KEEP_LAG, q.buf.length);
+        const t = this.target(name);
+        if (q.low > Math.max(STANDING_LAG, t + ms(250))) {
+          const cut = Math.min(q.low - Math.max(KEEP_LAG, t), q.buf.length);
           this.stats.dropped += cut;
           q.buf = q.buf.subarray(cut);
         }
