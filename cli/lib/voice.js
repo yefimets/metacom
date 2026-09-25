@@ -193,16 +193,17 @@ const loadPrefs = (file = prefsFile()) => {
   try {
     const p = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
     const volume = { master: 1, people: {}, ...(p.volume || {}) };
-    return { input: p.input || null, output: p.output || null, volume };
+    return { input: p.input || null, output: p.output || null, volume, micGain: typeof p.micGain === 'number' ? p.micGain : null };
   } catch {
-    return { input: null, output: null, volume: { master: 1, people: {} } };
+    return { input: null, output: null, volume: { master: 1, people: {} }, micGain: null };
   }
 };
 const savePrefs = (prefs, file = prefsFile()) => {
   const fs = require('node:fs');
   fs.mkdirSync(require('node:path').dirname(file), { recursive: true, mode: 0o700 });
   const volume = prefs.volume || { master: 1, people: {} };
-  fs.writeFileSync(file, JSON.stringify({ input: prefs.input || null, output: prefs.output || null, volume }, null, 2) + '\n', { mode: 0o600 });
+  const micGain = typeof prefs.micGain === 'number' ? prefs.micGain : null;
+  fs.writeFileSync(file, JSON.stringify({ input: prefs.input || null, output: prefs.output || null, volume, micGain }, null, 2) + '\n', { mode: 0o600 });
 };
 
 const has = (cmd) => spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }).status === 0;
@@ -250,7 +251,8 @@ const mix = (chunks, bytes, gains = []) => {
 
 /// Playback volume as the user says it: "150%", "1.5", "+", "-" (steps of 25%), "mute"; 0..4.
 const MAX_VOLUME = 4;
-const parseVolume = (arg, current = 1) => {
+const parseVolume = (arg, current = 1, max = MAX_VOLUME) => {
+  const MAX_VOLUME = max;
   const a = String(arg || '').trim().toLowerCase();
   if (a === '+' || a === 'up') return Math.min(MAX_VOLUME, current + 0.25);
   if (a === '-' || a === 'down') return Math.max(0, current - 0.25);
@@ -281,14 +283,21 @@ class Shaper {
   }
 
   /// One frame in, the frames to send out (none, this one, or the pre-roll and this one).
+  /// A fixed gain the user chose (/mic 150%) instead of levelling, or null for automatic.
+  get fixed() {
+    return this.o.fixedGain ?? null;
+  }
+
   push(frame) {
-    const level = rms(frame);
+    // with a fixed gain the gate hears the boosted level, so boosting a quiet mic gets it through
+    const level = rms(frame) * (this.fixed ?? 1);
     // the noise floor is the quietest frame of the last 3 s: speech always has gaps between
     // words, steady noise has none, so the floor finds the room either way
     this.levels = [...this.levels, level].slice(-75);
     this.floor = Math.max(10, Math.min(...this.levels));
     const loud = level >= this.threshold;
-    if (loud) {
+    if (this.fixed !== null) this.gain = this.fixed;
+    else if (loud) {
       const want = Math.min(this.o.maxGain, Math.max(1, this.o.target / level));
       this.gain = want < this.gain ? want : this.gain + (want - this.gain) * 0.15;
     }
@@ -446,11 +455,18 @@ class Audio extends EventEmitter {
       `arrives ${this.stats.activeMs ? ((this.stats.activeBytes / (RATE * 2)) / (this.stats.activeMs / 1000)).toFixed(2) : '-'}x real time · up to ${this.stats.burst} frames at once`,
       `buffer  ${[...this.jitter.keys()].map((n) => `${n} ${Math.round((this.target(n) / (RATE * 2)) * 1000)} ms`).join(' · ') || '-'} (grows for a connection that arrives in lumps)`,
       `mic in  ${this.cap.hz ? this.cap.hz + ' Hz measured' : 'measuring'}${this.inRate !== RATE ? ', converted from ' + this.inRate : ''} · up to ${Math.round(this.cap.maxChunk / (RATE * 2) * 1000)} ms per read`,
-      `sent    ${this.stats.sent} frames from this mic · gate ${Math.round(this.shaper.threshold)} · gain ${this.shaper.gain.toFixed(1)}x`,
+      `sent    ${this.stats.sent} frames from this mic · gate ${Math.round(this.shaper.threshold)} · gain ${this.shaper.gain.toFixed(1)}x ${this.shaper.fixed === null ? '(auto)' : '(fixed, /mic auto to level)'}`,
       `player  ${cmd(this.player)}${this.broken.player ? ' · broken' : ''} (way ${this.variant.player + 1})`,
       `mic     ${cmd(this.recorder)}${this.broken.recorder ? ' · broken' : ''} (way ${this.variant.recorder + 1})`,
       `devices in: ${this.devices.input || 'system default'} · out: ${this.devices.output || 'system default'}`,
     ].join('\n');
+  }
+
+  /// The mic's send level: a fixed gain (0..16) or null to level automatically; live.
+  setMicGain(v) {
+    this.shape = { ...this.shape, fixedGain: v };
+    this.shaper.o.fixedGain = v;
+    if (v === null) this.shaper.gain = 1;
   }
 
   /// Playback volume, for everyone (`who` null) or one speaker; applies from the next tick.

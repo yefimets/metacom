@@ -80,6 +80,11 @@ const main = async () => {
     await b.wait(/volume 200%/);
     const vol = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'metacom-hub', 'voice.json'), 'utf8')).volume;
     if (vol.master !== 2) throw new Error(`volume not saved: ${JSON.stringify(vol)}`);
+    await b.type('/mic 200%');
+    await b.type(b.key.enter, 500);
+    await b.wait(/mic 200% fixed/);
+    const mic = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'metacom-hub', 'voice.json'), 'utf8')).micGain;
+    if (mic !== 2) throw new Error(`mic gain not saved: ${mic}`);
     await b.type('/voice off');
     await b.type(b.key.enter, 300);
     await a.wait(/bob left the call/);

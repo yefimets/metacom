@@ -23,13 +23,15 @@ type AudioLike = {
   setDevice: (kind: "input" | "output", name: string | null) => void;
   report: () => string;
   setVolume: (who: string | null, v: number) => void;
+  setMicGain: (v: number | null) => void;
+  shaper: { gain: number };
 };
 type Device = { name: string; label: string; default: boolean };
 type Volume = { master: number; people: Record<string, number> };
-type Devices = { input: string | null; output: string | null; volume?: Volume };
+type Devices = { input: string | null; output: string | null; volume?: Volume; micGain?: number | null };
 const voice = require("../../lib/voice.js") as {
-  Audio: new (o: { send: (data: string) => void; devices?: Devices; volume?: Volume }) => AudioLike;
-  parseVolume: (arg: string, current: number) => number | null;
+  Audio: new (o: { send: (data: string) => void; devices?: Devices; volume?: Volume; shape?: { fixedGain: number | null } }) => AudioLike;
+  parseVolume: (arg: string, current: number, max?: number) => number | null;
   listDevices: () => { inputs?: Device[]; outputs?: Device[]; error?: string };
   resolveDevice: (arg: string, list: Device[] | null) => { name?: string | null; error?: string };
   loadPrefs: () => Devices;
@@ -119,6 +121,7 @@ export const COMMANDS = [
   { name: "input", args: "[n|name|default]", help: "which mic the call uses; remembered, switches live" },
   { name: "output", args: "[n|name|default]", help: "which speaker or headphones the call plays on; remembered, switches live" },
   { name: "volume", args: "[150%|+|-|<name> 200%]", help: "how loud the call plays, for everyone or one person (up to 400%)" },
+  { name: "mic", args: "[150%|+|-|auto]", help: "how loud you are sent: fixed up to 1600%, or auto (levelled)" },
   { name: "mute", args: "", help: "turn your mic off or on again, staying in the call (or click the bars by your name)" },
   { name: "rooms", args: "", help: "all rooms with counts (or ← on an empty line)" },
   { name: "room", args: "<name>", help: "open another room, creating it if it is new" },
@@ -377,6 +380,7 @@ export class Store {
       },
       devices: voice.loadPrefs(),
       volume: voice.loadPrefs().volume,
+      shape: { fixedGain: voice.loadPrefs().micGain ?? null },
     });
     audio.on("speaking", (on: boolean) => {
       if (this.state.call) this.set({ call: { ...this.state.call, speaking: on } });
@@ -761,6 +765,24 @@ export class Store {
         voice.savePrefs({ ...prefs, volume: vol });
         this.audio?.setVolume(who, v);
         this.setStatus(`${who ? who + "'s " : ""}volume ${pct(v)}${v > 1 ? " · peaks are rounded, not clipped" : ""}`, "ok", 3000);
+        break;
+      }
+      case "mic": {
+        const prefs = voice.loadPrefs();
+        const pct = (v: number) => `${Math.round(v * 100)}%`;
+        const now = this.audio ? ` · gain now ${this.audio.shaper.gain.toFixed(1)}x` : "";
+        if (!arg) return this.setStatus(`mic ${prefs.micGain == null ? "auto" : pct(prefs.micGain)}${now} · /mic 150% · /mic + · /mic auto`, "plain", 5000);
+        let v: number | null;
+        if (/^(auto|reset|default)$/i.test(arg)) v = null;
+        else {
+          // + and - step from the gain in use, so they work from auto too
+          const current = prefs.micGain ?? this.audio?.shaper.gain ?? 1;
+          v = voice.parseVolume(arg, current, 16);
+          if (v === null) return this.note("usage: /mic 150% · /mic + · /mic - · /mic auto (up to 1600%)", "warn");
+        }
+        voice.savePrefs({ ...prefs, micGain: v });
+        this.audio?.setMicGain(v);
+        this.setStatus(v === null ? "mic auto · your voice is levelled for you" : `mic ${pct(v)} fixed · /mic auto to level it again`, "ok", 3500);
         break;
       }
       case "input":

@@ -361,13 +361,35 @@ test('voice: switching the output mid-call starts the player again on the new de
 test('voice: the device choice is kept in its own file', () => {
   const file = require('node:path').join(require('node:os').tmpdir(), `voice-${process.pid}.json`);
   const plain = { master: 1, people: {} };
-  assert.deepStrictEqual(loadPrefs(file), { input: null, output: null, volume: plain });
+  assert.deepStrictEqual(loadPrefs(file), { input: null, output: null, volume: plain, micGain: null });
   savePrefs({ input: 'AirPods Pro', output: null }, file);
-  assert.deepStrictEqual(loadPrefs(file), { input: 'AirPods Pro', output: null, volume: plain });
+  assert.deepStrictEqual(loadPrefs(file), { input: 'AirPods Pro', output: null, volume: plain, micGain: null });
   savePrefs({ ...loadPrefs(file), volume: { master: 1.5, people: { roma2: 2 } } }, file);
   assert.deepStrictEqual(loadPrefs(file).volume, { master: 1.5, people: { roma2: 2 } });
   assert.strictEqual(loadPrefs(file).input, 'AirPods Pro', 'the devices stay');
   require('node:fs').unlinkSync(file);
+});
+
+test('voice: /mic sets a fixed send level, and a quiet mic boosted that way gets past the gate', () => {
+  const quiet = () => tone(40); // a whisper under the gate's floor of 120
+  const auto = new Shaper();
+  for (let i = 0; i < 10; i++) auto.push(tone(5));
+  assert.strictEqual(auto.push(quiet()).speaking, false, 'too quiet for the gate');
+  const fixed = new Shaper({ fixedGain: 4 });
+  for (let i = 0; i < 10; i++) fixed.push(tone(5));
+  const r = fixed.push(quiet());
+  assert.strictEqual(r.speaking, true, 'at 400% it counts as talking');
+  assert.strictEqual(Math.abs(r.frames.at(-1).readInt16LE(2)), 160, 'and goes out exactly 4x, no levelling');
+  const { spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: null, hint: '' }, spawner });
+  audio.setMicGain(1.5);
+  assert.strictEqual(audio.shaper.fixed, 1.5);
+  audio.stopMic();
+  assert.strictEqual(audio.shaper.fixed, 1.5, 'kept when the mic starts again');
+  audio.setMicGain(null);
+  assert.strictEqual(audio.shaper.fixed, null, 'auto again');
+  assert.strictEqual(parseVolume('1600%', 1, 16), 16);
+  assert.strictEqual(parseVolume('+', 7.9, 16), 8.15);
 });
 
 test('voice: /volume understands 150%, 1.5, 150, + and -, mute and reset', () => {
