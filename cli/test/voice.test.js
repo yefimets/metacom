@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
-const { Audio, Shaper, tools, rms, mix, FRAME_BYTES } = require('../lib/voice.js');
+const { Audio, Shaper, tools, rms, mix, resample, FRAME_BYTES } = require('../lib/voice.js');
 
 const fakeSpawner = () => {
   const spawned = [];
@@ -84,14 +84,80 @@ test('voice: steady noise raises the gate, so a fan does not hold the mic open',
   assert.strictEqual(s.push(tone(3000)).speaking, true);
 });
 
-test('voice: a speaker who falls far behind is cut back, not played late', () => {
+test('voice: a lump of audio from a recorder that delivers a second at a time is played, not cut', () => {
   const { spawner } = fakeSpawner();
   const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });
-  for (let i = 0; i < 30; i++) audio.play('bob', tone(100).toString('base64')); // 1.2 s arrives at once
   clearInterval(audio.timer);
-  const q = audio.queues.get('bob');
-  assert.ok(q.buf.length <= 16000 * 2 * 0.25, `queued ${q.buf.length} bytes`);
+  audio.timer = null;
+  const t0 = Date.now();
+  let t = t0;
+  // three seconds of speech arriving as one-second lumps of 25 frames
+  for (let s = 0; s < 3; s++) {
+    for (let i = 0; i < 25; i++) audio.play('bob', tone(1000).toString('base64'));
+    clearInterval(audio.timer);
+    for (const end = t + 1000; t < end; t += 20) audio.tick(t);
+  }
+  assert.strictEqual(audio.stats.dropped, 0, 'lumps are jitter, not lag');
+  assert.ok(audio.stats.burst >= 25, 'the lumps are seen as lumps');
   audio.close();
+});
+
+test('voice: a speaker who stays ahead of real time is cut back, not played ever later', () => {
+  const { spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });
+  let t = Date.now();
+  // twice real time for four seconds: two frames every 40 ms
+  for (let i = 0; i < 100; i++) {
+    audio.play('bob', tone(1000).toString('base64'));
+    audio.play('bob', tone(1000).toString('base64'));
+    clearInterval(audio.timer);
+    audio.tick((t += 20));
+    audio.tick((t += 20));
+  }
+  const q = audio.queues.get('bob');
+  assert.ok(audio.stats.dropped > 0, 'something had to go');
+  assert.ok(q.buf.length < 16000 * 2 * 2, `and the queue stays bounded: ${q.buf.length} bytes`);
+  audio.close();
+});
+
+test('voice: a recorder that ignores -r 16000 is measured and converted', () => {
+  const sent = [];
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: (d) => sent.push(d), tools: { rec: ['rec', []], play: null, hint: '' }, spawner });
+  const infos = [];
+  audio.on('info', (m) => infos.push(m));
+  audio.startMic();
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  try {
+    // 48 kHz for 2.5 s, in 20 ms reads
+    for (let i = 0; i < 125; i++) {
+      spawned[0].stdout.write(tone(3000, 48000 * 2 * 0.02));
+      t += 20;
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  assert.match(infos[0], /48000 Hz/);
+  assert.strictEqual(audio.inRate, 48000);
+  let frames = 0;
+  const push = audio.shaper.push.bind(audio.shaper);
+  audio.shaper.push = (f) => {
+    frames++;
+    return push(f);
+  };
+  audio.pending = Buffer.alloc(0);
+  spawned[0].stdout.write(tone(3000, 48000 * 2 * 0.12)); // 120 ms at 48 kHz = 3 frames at 16 kHz
+  assert.ok(frames >= 2 && frames <= 3, `120 ms at 48 kHz made ${frames} frames of 40 ms at 16 kHz`);
+  audio.close();
+});
+
+test('voice: resampling keeps the length right across chunks', () => {
+  const state = {};
+  let out = 0;
+  for (let i = 0; i < 10; i++) out += resample(state, tone(100, 4410 * 2), 44100).length / 2; // 10 × 100 ms at 44.1 kHz
+  assert.ok(Math.abs(out - 16000) <= 2, `1 s at 44.1 kHz gave ${out} samples at 16 kHz`);
 });
 
 test('voice: frames from two speakers are buffered, then mixed into one player', () => {

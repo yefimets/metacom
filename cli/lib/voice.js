@@ -15,12 +15,43 @@ const ms = (n) => Math.round((RATE * 2 * n) / 1000 / 2) * 2; // bytes of n milli
 // A speaker gathers this much before playing (network jitter); past MAX_LAG the oldest audio
 // goes, so a burst after a stall does not leave the call running behind for good.
 const PREBUFFER = ms(80);
-const MAX_LAG = ms(400);
-const KEEP_LAG = ms(200);
+// Some recorders hand their audio over in lumps (a second at a time), so a speaker's queue can
+// be long for a moment and then run dry: that is jitter, and it is played through. Only a queue
+// that stays longer than STANDING_LAG for a whole LAG_WINDOW (the speaker is really ahead of
+// real time) is cut back to KEEP_LAG; HARD_LAG bounds it no matter what.
+const STANDING_LAG = ms(300);
+const LAG_WINDOW = 2000;
+const KEEP_LAG = ms(150);
+const HARD_LAG = ms(2000);
 // After the last voice, the player is fed silence this long: sox plays nothing until its buffer
 // (8 KB, 256 ms, where a smaller one is refused) is full, so without it the end of a sentence
 // would wait inside sox until someone spoke again.
 const FLUSH_MS = 1000;
+
+/// Sample rates a recorder may use when it ignores the one it was asked for.
+const RATES = [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000];
+
+/// Linear resampling of int16 mono from `from` Hz to RATE, carrying the fraction and the
+/// unconsumed input between chunks in `state`.
+const resample = (state, chunk, from) => {
+  const input = Buffer.concat([state.rest || Buffer.alloc(0), chunk]);
+  const n = Math.floor(input.length / 2);
+  const step = from / RATE;
+  const out = [];
+  let pos = state.pos || 0;
+  while (pos + 1 < n) {
+    const i = Math.floor(pos);
+    const f = pos - i;
+    out.push(Math.round(input.readInt16LE(i * 2) * (1 - f) + input.readInt16LE(i * 2 + 2) * f));
+    pos += step;
+  }
+  const used = Math.min(Math.floor(pos), n);
+  state.rest = input.subarray(used * 2);
+  state.pos = pos - used;
+  const buf = Buffer.alloc(out.length * 2);
+  out.forEach((v, k) => buf.writeInt16LE(Math.max(-32768, Math.min(32767, v)), k * 2));
+  return buf;
+};
 
 /// Voice detection and levelling, the same numbers as the phone (hub/web/app.js).
 const SHAPE = {
@@ -268,7 +299,10 @@ class Audio extends EventEmitter {
     this.timer = null;
     this.clock = null; // { t0, written } while the player is fed
     this.lastVoice = 0;
-    this.stats = { frames: 0, bytes: 0, dropped: 0, gaps: 0, sent: 0 };
+    this.inRate = RATE; // what the recorder really gives, once measured
+    this.rs = {}; // resampler state
+    this.cap = { t0: 0, bytes: 0, maxChunk: 0, decided: false, hz: 0 };
+    this.stats = { frames: 0, bytes: 0, dropped: 0, gaps: 0, sent: 0, run: 0, burst: 0, activeMs: 0, activeBytes: 0 };
     this.variant = { recorder: 0, player: 0 }; // which of variants() works here
     this.broken = { recorder: false, player: false }; // every variant failed: stop trying
     this.wantMic = false;
@@ -321,6 +355,8 @@ class Audio extends EventEmitter {
   }
 
   captured(chunk) {
+    this.measure(chunk);
+    if (this.inRate !== RATE) chunk = resample(this.rs, chunk, this.inRate);
     this.pending = Buffer.concat([this.pending, chunk]);
     while (this.pending.length >= FRAME_BYTES) {
       const frame = Buffer.from(this.pending.subarray(0, FRAME_BYTES));
@@ -329,6 +365,31 @@ class Audio extends EventEmitter {
       for (const f of frames) this.send(f.toString('base64'));
       this.stats.sent += frames.length;
       this.setSpeaking(speaking);
+    }
+  }
+
+  /// How the recorder really delivers: how much at a time, and at what rate. A recorder that
+  /// ignores -r 16000 (the device's own 48 kHz, say) is found after two seconds and converted.
+  measure(chunk) {
+    const now = Date.now();
+    const m = this.cap;
+    if (!m.t0) {
+      // time starts at the first read, so its bytes took no time: count from the next one
+      m.t0 = now;
+      return;
+    }
+    m.maxChunk = Math.max(m.maxChunk, chunk.length);
+    if (m.decided) return;
+    m.bytes += chunk.length;
+    const secs = (now - m.t0) / 1000;
+    if (secs < 2) return;
+    m.decided = true;
+    const hz = m.bytes / 2 / secs;
+    m.hz = Math.round(hz);
+    const near = RATES.reduce((a, b) => (Math.abs(b - hz) < Math.abs(a - hz) ? b : a));
+    if (near !== RATE && Math.abs(hz / near - 1) < 0.1) {
+      this.inRate = near;
+      this.emit('info', `the mic records at ${near} Hz, not ${RATE}: converting`);
     }
   }
 
@@ -346,6 +407,8 @@ class Audio extends EventEmitter {
     return [
       `heard   ${this.stats.frames} frames, ${kb(this.stats.bytes)} (${(this.stats.bytes / (RATE * 2)).toFixed(1)} s of voice)`,
       `dropped ${kb(this.stats.dropped)} to catch up · ${this.stats.gaps} gaps over 200 ms while someone spoke`,
+      `arrives ${this.stats.activeMs ? ((this.stats.activeBytes / (RATE * 2)) / (this.stats.activeMs / 1000)).toFixed(2) : '-'}x real time · up to ${this.stats.burst} frames at once`,
+      `mic in  ${this.cap.hz ? this.cap.hz + ' Hz measured' : 'measuring'}${this.inRate !== RATE ? ', converted from ' + this.inRate : ''} · up to ${Math.round(this.cap.maxChunk / (RATE * 2) * 1000)} ms per read`,
       `sent    ${this.stats.sent} frames from this mic · gate ${Math.round(this.shaper.threshold)} · gain ${this.shaper.gain.toFixed(1)}x`,
       `player  ${cmd(this.player)}${this.broken.player ? ' · broken' : ''} (way ${this.variant.player + 1})`,
       `mic     ${cmd(this.recorder)}${this.broken.recorder ? ' · broken' : ''} (way ${this.variant.recorder + 1})`,
@@ -378,17 +441,27 @@ class Audio extends EventEmitter {
   play(from, data) {
     const bytes = Buffer.from(String(data || ''), 'base64');
     if (!bytes.length) return;
-    const q = this.queues.get(from) || { buf: Buffer.alloc(0), playing: false, last: 0 };
+    const now = Date.now();
+    const q = this.queues.get(from) || { buf: Buffer.alloc(0), playing: false, last: 0, low: Infinity, lowSince: 0 };
     q.buf = Buffer.concat([q.buf, bytes]);
-    this.stats.frames++;
-    this.stats.bytes += bytes.length;
-    // behind by more than MAX_LAG (a stall, then a burst): drop the oldest, back to KEEP_LAG
-    if (q.buf.length > MAX_LAG) {
-      this.stats.dropped += q.buf.length - KEEP_LAG;
+    const st = this.stats;
+    st.frames++;
+    st.bytes += bytes.length;
+    // how the audio arrives: lumps of frames at once, and how fast against real time
+    const gap = now - (this.lastArrival || 0);
+    st.run = gap < 10 ? st.run + 1 : 1;
+    st.burst = Math.max(st.burst, st.run);
+    if (gap < 2000) {
+      st.activeMs += gap;
+      st.activeBytes += bytes.length;
+    }
+    this.lastArrival = now;
+    if (q.buf.length > HARD_LAG) {
+      st.dropped += q.buf.length - KEEP_LAG;
       q.buf = q.buf.subarray(q.buf.length - KEEP_LAG);
     }
-    if (q.last && Date.now() - q.last > 200 && q.playing) this.stats.gaps++;
-    q.last = Date.now();
+    if (q.last && now - q.last > 200 && q.playing) st.gaps++;
+    q.last = now;
     this.queues.set(from, q);
     if (!this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
   }
@@ -416,6 +489,18 @@ class Audio extends EventEmitter {
       q.playing = true;
       chunks.push(q.buf.subarray(0, due));
       q.buf = q.buf.subarray(Math.min(due, q.buf.length));
+      // the least this queue held over the window: if even that is long, the speaker is ahead
+      if (!q.lowSince) q.lowSince = now;
+      q.low = Math.min(q.low, q.buf.length);
+      if (now - q.lowSince >= LAG_WINDOW) {
+        if (q.low > STANDING_LAG) {
+          const cut = Math.min(q.low - KEEP_LAG, q.buf.length);
+          this.stats.dropped += cut;
+          q.buf = q.buf.subarray(cut);
+        }
+        q.low = Infinity;
+        q.lowSince = now;
+      }
       if (!q.buf.length) {
         q.playing = false;
         this.queues.delete(name);
@@ -478,4 +563,4 @@ class Audio extends EventEmitter {
   }
 }
 
-module.exports = { Audio, Shaper, tools, rms, mix, listDevices, resolveDevice, withDevice, loadPrefs, savePrefs, RATE, FRAME_BYTES, FRAME_MS };
+module.exports = { Audio, Shaper, tools, rms, mix, resample, listDevices, resolveDevice, withDevice, loadPrefs, savePrefs, RATE, FRAME_BYTES, FRAME_MS };

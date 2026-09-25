@@ -15,7 +15,7 @@ const media = require("../../lib/media.js") as {
   openFile: (file: string) => boolean;
 };
 type AudioLike = {
-  on: (event: "speaking" | "error", fn: (x: any) => void) => void;
+  on: (event: "speaking" | "error" | "info", fn: (x: any) => void) => void;
   startMic: () => boolean;
   stopMic: () => void;
   play: (from: string, data: string) => void;
@@ -31,6 +31,7 @@ const voice = require("../../lib/voice.js") as {
   resolveDevice: (arg: string, list: Device[] | null) => { name?: string | null; error?: string };
   loadPrefs: () => Devices;
   savePrefs: (p: Devices) => void;
+  tools: () => { rec: [string, string[]] | null };
 };
 
 export type Media = { url: string; type: string; size: number; name: string };
@@ -364,7 +365,8 @@ export class Store {
     const api = this.hub?.api;
     if (!api?.voice) return this.note("this hub has no calls yet · update and restart it", "warn");
     const room = this.state.room;
-    await api.voice.join({ room, mic: true });
+    const rec = voice.tools().rec;
+    await api.voice.join({ room, mic: true, tool: rec ? rec[0] + " " + rec[1].join(" ") : "none" });
     const audio = new voice.Audio({
       send: (data) => {
         api.voice!.frame({ data }).catch(() => {});
@@ -375,6 +377,7 @@ export class Store {
       if (this.state.call) this.set({ call: { ...this.state.call, speaking: on } });
     });
     audio.on("error", (msg: string) => this.note(`call: ${msg}`, "warn"));
+    audio.on("info", (msg: string) => this.setStatus(`call: ${msg}`, "plain", 5000));
     this.audio = audio;
     this.set({ call: { room, mic: true, speaking: false } });
     const mic = audio.startMic();

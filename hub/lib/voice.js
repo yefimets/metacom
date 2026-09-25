@@ -17,6 +17,9 @@ const QUIET_MS = 450;
 // pre-roll a client sends when a voice starts.
 const FRAME_WINDOW = 2_000;
 const FRAME_CALLS = 150;
+// Every so often the hub logs, per sender, how their audio really arrives: that is where a
+// choppy call is diagnosed (a recorder that lumps its output, one faster than real time).
+const REPORT_MS = 10_000;
 
 /// Room calls, Discord style: anyone in a room can join its call, with the mic on or muted.
 /// Membership belongs to a connection (the chat window you joined from), the roster to names,
@@ -32,14 +35,14 @@ class Voice {
   }
 
   /// Join a room's call (again), or change the mic. `mic` defaults to on: joining is talking.
-  join(conn, room, mic = true) {
+  join(conn, room, mic = true, tool = null) {
     if (conn.ephemeral) throw fail(400, 'Join a call over a websocket connection');
     room = String(room || '') || (conn.room !== '*' ? conn.room : '');
     if (!ROOM.test(room)) throw fail(400, 'room is required');
     if (conn.record.role !== 'owner' && conn.room !== room) throw fail(403, 'Not your room');
     const before = conn.voice;
     if (before && before.room !== room) this.leave(conn);
-    conn.voice = { room, mic: Boolean(mic), since: before && before.room === room ? before.since : new Date().toISOString() };
+    conn.voice = { room, mic: Boolean(mic), since: before && before.room === room ? before.since : new Date().toISOString(), tool: tool ? String(tool).slice(0, 160) : before?.tool || 'web' };
     if (!conn.voice.mic) this.quiet(room, this.nameOf(conn), false);
     this.changed(room);
     return this.state(room);
@@ -47,12 +50,14 @@ class Voice {
 
   mic(conn, on) {
     if (!conn.voice) throw fail(409, 'Not in a call');
+    if (!on) this.report(conn);
     return this.join(conn, conn.voice.room, on);
   }
 
   leave(conn) {
     const was = conn.voice;
     if (!was) return { room: null, participants: [] };
+    this.report(conn, was);
     conn.voice = null;
     const name = this.nameOf(conn);
     if (!this.connsOf(was.room).some((c) => this.nameOf(c) === name)) this.quiet(was.room, name, false);
@@ -68,6 +73,7 @@ class Voice {
     if (!call || !call.mic) return { ok: false };
     if (typeof data !== 'string' || data.length === 0 || data.length > MAX_B64 || data.length % 4 !== 0) throw fail(400, 'frame: base64 PCM16 up to 150 ms');
     const from = this.nameOf(conn);
+    this.track(conn, from, call, data.length);
     const key = `${call.room}\n${from}`;
     const wasQuiet = !this.speaking.has(key);
     clearTimeout(this.speaking.get(key));
@@ -79,6 +85,33 @@ class Voice {
       this.hub.emit(other.client, 'voice/frame', packet);
     }
     return { ok: true };
+  }
+
+  track(conn, from, call, b64) {
+    const now = Date.now();
+    const s = conn.vstats || (conn.vstats = { frames: 0, bytes: 0, activeMs: 0, activeBytes: 0, run: 0, burst: 0, last: 0 });
+    const bytes = (b64 / 4) * 3;
+    const gap = now - s.last;
+    s.frames++;
+    s.bytes += bytes;
+    s.run = gap < 10 ? s.run + 1 : 1;
+    s.burst = Math.max(s.burst, s.run);
+    if (gap < 2000) {
+      s.activeMs += gap;
+      s.activeBytes += bytes;
+    }
+    s.last = now;
+    if (!s.since) s.since = now;
+    if (now - s.since >= REPORT_MS) this.report(conn, call);
+  }
+
+  /// One log line for what a sender delivered since the last one; also when they mute or leave.
+  report(conn, call = conn.voice) {
+    const s = conn.vstats;
+    if (!s || !call) return;
+    conn.vstats = null;
+    const x = s.activeMs ? (s.activeBytes / (RATE * 2) / (s.activeMs / 1000)).toFixed(2) : '-';
+    this.hub.console.log(`voice: ${this.nameOf(conn)} in ${call.room}: ${s.frames} frames, ${Math.round(s.bytes / 1024)} KB, ${x}x real time, up to ${s.burst} at once · ${call.tool}`);
   }
 
   quiet(room, name, announce = true) {
