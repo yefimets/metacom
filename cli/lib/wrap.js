@@ -79,7 +79,13 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
 
   const register = () =>
     hub.api.agents.register({ name, room, repo: repo || cwd, caps, host: os.hostname(), command: fullCommand, kind: 'agent', accept: gate.wire });
-  const hub = await connect({ url, token, onOpen: () => register().then(pullInbox) });
+  const hub = await connect({ url, token, onOpen: () => register().then(pullInbox) }).catch((error) => {
+    // the chat signs in with `token`, agents with `agentToken`: a stale agent token leaves the
+    // chat working and every agent failing, so say which one it was
+    if (!/bad token/i.test(error.message)) throw error;
+    const which = process.env.MC_AGENT_TOKEN ? 'MC_AGENT_TOKEN' : config.agentToken ? `the agentToken in ${require('./config.js').file}` : process.env.MC_TOKEN ? 'MC_TOKEN' : 'the token in config';
+    throw new Error(`Bad token: agents sign in with ${which}. Replace it: metacom login ${url} <token> --agent-token <token>`);
+  });
   await register();
   const roster = (await hub.api.agents.list({ room }).catch(() => []))
     .filter((m) => m.kind === 'agent' && m.name !== name && m.connected)
