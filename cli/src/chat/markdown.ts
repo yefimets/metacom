@@ -122,8 +122,17 @@ export const wrapSpans = (spans: Span[], width: number, lead: Span[] = [], hang 
           take.push(rest.shift()!);
         }
         if (take.length === 0) {
-          flush();
-          continue;
+          // not even one character fits: on a fresh line take one anyway (a wide glyph in a
+          // one-column room, or a hang as wide as the room), or this loops until memory runs out
+          if (used <= terminalWidth(hang) || current.length === 0) {
+            const g = rest.shift()!;
+            take.push(g);
+            taken += terminalWidth(g);
+          }
+          else {
+            flush();
+            continue;
+          }
         }
         current.push({ ...word, text: take.join("") });
         used += taken;
@@ -148,6 +157,8 @@ const hardLines = (text: string, width: number, style: Style): Line[] => {
       taken += terminalWidth(rest[0]!);
       take.push(rest.shift()!);
     }
+    // a character wider than the room still goes on a line of its own, or rest never shrinks
+    if (take.length === 0 && rest.length > 0) take.push(rest.shift()!);
     out.push(lineOf([{ text: take.join(""), ...style }]));
   } while (rest.length > 0);
   return out;
