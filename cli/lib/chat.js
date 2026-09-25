@@ -10,6 +10,10 @@ const chat = async ({ name, room, config, plain = false, theme = null }) => {
     const { plainChat } = require('./chat-plain.js');
     return plainChat({ name, room, config });
   }
+  // React's development build records every render as a performance.measure entry, and Node
+  // keeps those forever: with an agent's spinner redrawing the chat several times a second the
+  // heap grew ~70 MB/s until V8 aborted. Production React unless someone asks for the dev build.
+  if (!process.env.NODE_ENV) process.env.NODE_ENV = 'production';
   const { register } = require('tsx/esm/api');
   register({ tsconfig: path.join(__dirname, '..', 'tsconfig.json') });
   const { start } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'chat', 'main.tsx')).href);
