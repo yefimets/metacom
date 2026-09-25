@@ -90,7 +90,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
         hub: {
           command: process.execPath,
           args: [path.join(__dirname, '..', 'bin', 'metacom.js'), 'mcp'],
-          env: { MC_HUB_URL: url, MC_TOKEN: token, MC_AGENT: name, MC_ROOM: room },
+          env: { MC_HUB_URL: url, MC_TOKEN: token, MC_AGENT: name, MC_ROOM: room, MC_WRAPPER_PID: String(process.pid) },
         },
       },
     };

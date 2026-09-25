@@ -16,8 +16,21 @@ const serveMcp = async (config) => {
   const room = process.env.MC_ROOM || config.room;
   if (!name) throw new Error('MC_AGENT is not set; `metacom mcp` is started by the wrapper');
   const token = config.agentToken || config.token;
-  const hub = await connect({ url: config.url, token, onOpen: () => hub.api.agents.register({ name, room }) });
-  await hub.api.agents.register({ name, room });
+  // The wrapper owns the member's presence; the bridge only follows it. Claude Code can hand a
+  // session to its background daemon, which keeps this process alive after the wrapper is gone:
+  // leave with the wrapper instead of lingering in the room under its name.
+  const wrapper = Number(process.env.MC_WRAPPER_PID);
+  if (wrapper) {
+    setInterval(() => {
+      try {
+        process.kill(wrapper, 0);
+      } catch (err) {
+        if (err.code === 'ESRCH') process.exit(0);
+      }
+    }, 2000).unref();
+  }
+  const hub = await connect({ url: config.url, token, onOpen: () => hub.api.agents.register({ name, room, follow: true }) });
+  await hub.api.agents.register({ name, room, follow: true });
   // attachments come back as local files so the agent can open them with its own tools
   const local = async (msg) => {
     if (!Array.isArray(msg.media) || msg.media.length === 0) return line(msg);

@@ -80,7 +80,7 @@ class Hub {
     const conn = this.conns.get(client);
     if (!conn) return;
     this.conns.delete(client);
-    if (!conn.name) return;
+    if (!conn.name || conn.follow) return;
     const set = this.byName.get(conn.name);
     if (set) {
       set.delete(client);
@@ -145,6 +145,7 @@ class Hub {
     if (conn.ephemeral) throw fail(400, 'Register over a websocket connection');
     const name = String(info.name || '');
     if (!NAME.test(name)) throw fail(400, 'name: letters, digits, dot, dash, underscore, up to 32');
+    if (info.follow) return this.follow(conn, name);
     const kind = info.kind || 'agent';
     if (!KINDS.has(kind)) throw fail(400, 'kind must be agent or human');
     if (kind === 'human' && conn.record.role !== 'owner') throw fail(403, 'Only owner tokens join as humans');
@@ -179,6 +180,22 @@ class Hub {
     this.saveMembers();
     if (!wasConnected) this.system(member.room, `${name} joined${member.host ? ' from ' + member.host : ''}`);
     this.changed();
+    return this.publicMember(member);
+  }
+
+  /// A companion connection (the MCP bridge inside the agent) speaks as a member its wrapper
+  /// registered, but never counts for presence: the member is online while the wrapper is, and a
+  /// bridge a background process kept alive after the wrapper exited cannot hold it online.
+  follow(conn, name) {
+    const member = this.members.get(name);
+    if (!member) throw fail(404, `No member named "${name}"; its wrapper registers it`);
+    if (member.tokenId !== conn.record.id && conn.record.role !== 'owner') {
+      throw fail(403, `"${name}" belongs to another token`);
+    }
+    if (conn.name && conn.name !== name) this.unbind(conn.client);
+    conn.name = name;
+    conn.room = member.room;
+    conn.follow = true;
     return this.publicMember(member);
   }
 
