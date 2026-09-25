@@ -80,6 +80,23 @@ const main = async () => {
   await a.type(a.key.esc, 300);
   await a.type(a.key.esc, 300);
 
+  // the room list: ← on an empty line, type a new name, enter creates and opens it, and back
+  await b.type(b.key.left);
+  await b.wait(/rooms[\s\S]*tuitest[\s\S]*you are here/);
+  await b.type('tuipick');
+  await b.wait(/\+ create tuipick/);
+  show(b, 'bob: room list, new name typed');
+  await b.type(b.key.enter);
+  await b.wait(/message tuipick ·/);
+  show(b, 'bob: in the new room');
+  await b.type(b.key.left);
+  await b.wait(/tuipick[\s\S]*you are here/);
+  await b.type('tuitest');
+  await b.type(b.key.right);
+  await b.wait(/message tuitest ·/);
+  await b.wait(/─ now/);
+  show(b, 'bob: back in tuitest with its history');
+
   // tiny terminal
   a.resize(40, 8);
   await sleep(300);

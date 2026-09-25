@@ -3,24 +3,19 @@ import React from "react";
 
 import { useTheme } from "@/hooks/use-theme";
 import type { Tone } from "@/chat/store";
+import { time } from "@/chat/components/message";
 
-const ICON: Record<Tone, string> = { ok: "✓", warn: "!", error: "✗", dim: "", plain: "" };
-
-/// A line of the chat's own: results, hints, errors. Toned ones get an icon in the theme's
-/// status colour; the text wraps under it.
-export const Note = ({ text, tone }: { text: string; tone: Tone }) => {
+/// A line of the chat's own that has to stay: a warning, an error, an agent that needs you.
+/// Drawn like the room's "misha joined" lines, quiet and on one row, with the time after it;
+/// only the dot takes the tone's colour.
+export const Note = ({ text, tone, ts }: { text: string; tone: Tone; ts?: string }) => {
   const theme = useTheme();
-  const color = tone === "ok" ? theme.colors.success : tone === "warn" ? theme.colors.warning : tone === "error" ? theme.colors.error : tone === "plain" ? theme.colors.foreground : theme.colors.mutedForeground;
-  const icon = ICON[tone];
+  const muted = theme.colors.mutedForeground;
+  const dot = tone === "warn" ? theme.colors.warning : tone === "error" ? theme.colors.error : muted;
   return (
-    <Box paddingLeft={2}>
-      <Text wrap="wrap">
-        {icon && (
-          <Text color={color} bold>
-            {icon}{" "}
-          </Text>
-        )}
-        <Text color={tone === "dim" || tone === "plain" ? color : theme.colors.foreground}>{text}</Text>
+    <Box>
+      <Text color={muted} wrap="wrap">
+        <Text color={dot}>·</Text> {text}  {ts ? time(ts) : ""}
       </Text>
     </Box>
   );

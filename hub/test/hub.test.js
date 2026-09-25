@@ -104,3 +104,17 @@ test('hub: agents take commands from each other only per their accept policy; th
   // the owner always may
   assert.strictEqual((await hub.send(ownerConn, 'Alex', 'go')).kind, 'command');
 });
+
+test('hub: rooms are safe file names, and a room is listed once a human or a log is in it', () => {
+  const { hub, ownerConn } = setup();
+  for (const bad of ['../x', 'a/b', '.hidden', '', 'x'.repeat(65)]) {
+    assert.throws(() => hub.register(ownerConn, { name: 'misha', kind: 'human', room: bad }), (e) => e.code === 400, bad);
+  }
+  assert.throws(() => hub.join(ownerConn, '../etc'), (e) => e.code === 400);
+  assert.throws(() => hub.say(ownerConn, '../etc', 'hi'), (e) => e.code === 400);
+  assert.strictEqual(hub.members.get('misha'), undefined);
+  hub.register(ownerConn, { name: 'misha', kind: 'human', room: 'plans' });
+  assert.deepStrictEqual(hub.rooms().find((r) => r.room === 'plans'), { room: 'plans', agents: 0, online: 0, working: 0, blocked: 0, attention: 0 });
+  hub.say(ownerConn, 'notes', 'kept');
+  assert.ok(hub.rooms().some((r) => r.room === 'notes'));
+});

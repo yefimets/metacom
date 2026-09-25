@@ -50,7 +50,7 @@ type Distribute<T> = T extends unknown ? Omit<T, "id"> : never;
 export type Entry =
   | { id: string; type: "banner" }
   | { id: string; type: "message"; msg: Message; grouped: boolean }
-  | { id: string; type: "note"; tone: Tone; text: string }
+  | { id: string; type: "note"; tone: Tone; text: string; ts: string }
   | { id: string; type: "members"; members: Member[] }
   | { id: string; type: "screen"; name: string; text: string }
   | { id: string; type: "rooms"; rooms: RoomSummary[] }
@@ -86,7 +86,8 @@ export const COMMANDS = [
   { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
   { name: "save", args: "[n] [dir]", help: "save the latest file sent in the room (n = 2 is the one before) to ~/Downloads" },
   { name: "open", args: "[n]", help: "save the latest file and open it" },
-  { name: "rooms", args: "", help: "all rooms with counts" },
+  { name: "rooms", args: "", help: "all rooms with counts (or ← on an empty line)" },
+  { name: "room", args: "<name>", help: "open another room, creating it if it is new" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
   { name: "mouse", args: "[on|off]", help: "clicking names and message buttons (off by default, so text selects)" },
   { name: "click", args: "", help: "same as ctrl+t: hand the mouse to the terminal, or take it back" },
@@ -96,6 +97,8 @@ export const COMMANDS = [
 ] as const;
 
 export const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
+/// What the hub takes as a room name.
+export const ROOM = /^[\w][\w.-]{0,63}$/;
 
 /// One-word state for a member as humans think of it, not the raw hub status.
 /// Three words for what a member is: here and busy, here and not, or gone. The server knows
@@ -146,9 +149,13 @@ export class Store {
     this.set({ log: log.length > 500 ? log.slice(-400) : log });
   }
 
+  /// The chat's own word. A result or a hint is said under the input for a moment and gone;
+  /// only what needs the reader (a warning, an error, an agent stuck on a question) stays in
+  /// the conversation, drawn like "misha joined".
   note(text: string, tone: Tone = "dim"): void {
+    if (tone !== "warn" && tone !== "error") return this.setStatus(text, tone === "dim" ? "plain" : tone, 4000);
     this.lastMessage = null;
-    this.push({ type: "note", tone, text });
+    this.push({ type: "note", tone, text, ts: new Date().toISOString() });
   }
 
   setBusy(busy: string | null): void {
@@ -189,10 +196,47 @@ export class Store {
     hub.m.on("close", () => this.setBusy("reconnecting…"));
     hub.m.on("open", () => this.setBusy(null));
     this.push({ type: "banner" });
-    const history: Message[] = await hub.api.room.history({ room, limit: 30 });
+    await this.load();
+  }
+
+  /// The room's recent history and its members, into an empty log.
+  private async load(): Promise<void> {
+    const hub = this.hub!;
+    const history: Message[] = await hub.api.room.history({ room: this.state.room, limit: 30 });
     this.onMembers(await hub.api.agents.list({}));
     for (const m of history) this.push({ type: "message", msg: m, grouped: this.group(m) });
     if (history.length) this.push({ type: "rule", text: "now" });
+  }
+
+  /// Every room on the hub, for the room list (← on an empty line).
+  async rooms(): Promise<RoomSummary[]> {
+    return this.hub ? this.hub.api.room.list({}) : [];
+  }
+
+  /// Move to another room, creating it if nobody has used the name yet: the member follows,
+  /// the conversation is replaced by that room's.
+  async switchRoom(room: string): Promise<boolean> {
+    if (!this.hub || room === this.state.room) return true;
+    if (!ROOM.test(room)) {
+      this.note("a room name is letters, digits, dot, dash or underscore", "warn");
+      return false;
+    }
+    const was = this.state.room;
+    this.set({ room, log: [], members: new Map() });
+    this.lastMessage = null;
+    this.states.clear();
+    this.marks.clear();
+    try {
+      await this.join(false);
+      await this.load();
+      return true;
+    } catch (error) {
+      this.set({ room: was, log: [] });
+      await this.join(false).catch(() => {});
+      await this.load().catch(() => {});
+      this.note(`could not open ${room}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
   }
 
   private async join(again: boolean): Promise<void> {
@@ -203,7 +247,6 @@ export class Store {
     await hub.api.agents.register({ name, room, kind, host: os.hostname() });
     if (kind === "human") await hub.api.room.join({ room });
     await hub.api.agents.status({ status: "waiting" });
-    if (again) this.note("reconnected", "ok");
   }
 
   /// Consecutive messages from one sender within two minutes drop the repeated time and name.
@@ -241,7 +284,7 @@ export class Store {
       // question still has to reach the reader, so that arrives in the conversation instead.
       const stuck = m.status === "blocked";
       if (stuck && this.marks.get(m.name) !== "blocked") {
-        this.note(`${m.name} needs you${m.reason ? ": " + m.reason : ""}  ·  /read ${m.name}, then @${m.name} !keys y or @${m.name} !cancel`, "warn");
+        this.note(`${m.name} needs you${m.reason ? ": " + m.reason : ""}`, "warn");
         this.onBell();
       }
       this.marks.set(m.name, stuck ? "blocked" : "");
@@ -502,6 +545,10 @@ export class Store {
         this.note(`saved ${await media.saveAs({ http: this.config.http, media: m, dir: rest.join(" ") || undefined })}`, "ok");
         break;
       }
+      case "room":
+        if (!arg) return this.note("usage: /room <name> · or ← on an empty line for the list", "warn");
+        await this.switchRoom(arg);
+        break;
       case "rooms":
         this.push({ type: "rooms", rooms: await api.room.list({}) });
         break;

@@ -3,7 +3,7 @@
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
-const { Store } = require('./store.js');
+const { ROOM, Store } = require('./store.js');
 const { Media } = require('./media.js');
 const { route } = require('./router.js');
 const { fail } = require('./errors.js');
@@ -149,6 +149,7 @@ class Hub {
     const kind = info.kind || 'agent';
     if (!KINDS.has(kind)) throw fail(400, 'kind must be agent or human');
     if (kind === 'human' && conn.record.role !== 'owner') throw fail(403, 'Only owner tokens join as humans');
+    if (info.room !== undefined && !ROOM.test(String(info.room))) throw fail(400, 'room: letters, digits, dot, dash, underscore, up to 64');
     let member = this.members.get(name);
     if (member && member.tokenId !== conn.record.id && conn.record.role !== 'owner') {
       throw fail(403, `"${name}" belongs to another token`);
@@ -158,7 +159,7 @@ class Hub {
       this.members.set(name, member);
     }
     member.kind = kind;
-    if (info.room !== undefined) member.room = String(info.room).slice(0, 64);
+    if (info.room !== undefined) member.room = String(info.room);
     if (!member.room) member.room = 'default';
     if (info.repo !== undefined) member.repo = info.repo ? String(info.repo).slice(0, 512) : null;
     if (Array.isArray(info.caps)) member.caps = info.caps.map((c) => String(c).slice(0, 32)).slice(0, 32);
@@ -311,7 +312,8 @@ class Hub {
 
   join(conn, room) {
     if (conn.ephemeral) throw fail(400, 'Join over a websocket connection');
-    conn.room = String(room || '').slice(0, 64) || '*';
+    conn.room = String(room || '') || '*';
+    if (conn.room !== '*' && !ROOM.test(conn.room)) throw fail(400, 'room: letters, digits, dot, dash, underscore, up to 64');
     if (conn.room !== '*' && conn.record.role !== 'owner' && conn.name) {
       const member = this.members.get(conn.name);
       if (member.room !== conn.room) throw fail(403, 'Agents stay in the room they registered in');
@@ -431,10 +433,14 @@ class Hub {
 
   /// Rooms with herdr-style rollups: how many agents are working, blocked, or done unseen.
   rooms() {
-    const summary = new Map([['default', { room: 'default', agents: 0, online: 0, working: 0, blocked: 0, attention: 0 }]]);
+    const empty = (room) => ({ room, agents: 0, online: 0, working: 0, blocked: 0, attention: 0 });
+    // every room with a log or a member, so one a human just opened is listed before anyone speaks
+    const summary = new Map(['default', ...this.store.rooms()].map((room) => [room, empty(room)]));
     for (const m of this.members.values()) {
-      if (!m.room || m.kind !== 'agent') continue;
-      const s = summary.get(m.room) || { room: m.room, agents: 0, online: 0, working: 0, blocked: 0, attention: 0 };
+      if (!m.room) continue;
+      const s = summary.get(m.room) || empty(m.room);
+      summary.set(m.room, s);
+      if (m.kind !== 'agent') continue;
       s.agents++;
       if (m.connected) s.online++;
       if (m.connected && m.status === 'working') s.working++;

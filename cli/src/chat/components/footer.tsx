@@ -16,7 +16,7 @@ export const Footer = ({ text, busy, status, members, room, attachments = 0, fra
   );
   if (status)
     return line(
-      <Text color={status.tone === "warn" ? theme.colors.warning : status.tone === "error" ? theme.colors.error : theme.colors.success}>{status.text}</Text>
+      <Text color={status.tone === "warn" ? theme.colors.warning : status.tone === "error" ? theme.colors.error : status.tone === "plain" ? theme.colors.mutedForeground : theme.colors.success}>{status.text}</Text>
     );
   if (busy)
     return line(

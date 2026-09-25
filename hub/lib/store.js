@@ -2,6 +2,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { fail } = require('./errors.js');
+
+/// Room names become file names, so they are kept to what cannot leave the rooms directory.
+const ROOM = /^[\w][\w.-]{0,63}$/;
 
 /// Append-only JSONL files under the data directory. One file per room for the stream,
 /// one for directed messages, one JSON snapshot for members. Postgres can replace this
@@ -13,7 +17,17 @@ class Store {
   }
 
   roomFile(room) {
+    if (!ROOM.test(String(room))) throw fail(400, 'room: letters, digits, dot, dash, underscore, up to 64');
     return path.join(this.dir, 'rooms', room + '.jsonl');
+  }
+
+  /// Every room that has a log.
+  rooms() {
+    try {
+      return fs.readdirSync(path.join(this.dir, 'rooms')).filter((f) => f.endsWith('.jsonl')).map((f) => f.slice(0, -6)).filter((r) => ROOM.test(r));
+    } catch {
+      return [];
+    }
   }
 
   append(file, record) {
@@ -67,4 +81,4 @@ class Store {
   }
 }
 
-module.exports = { Store };
+module.exports = { ROOM, Store };

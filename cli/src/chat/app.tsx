@@ -14,10 +14,11 @@ import { MessageLine, actionAt, bodyOf, type Action } from "@/chat/components/me
 import { type Selection, isEmpty, textOf } from "@/chat/selection";
 import { bodyTextLines } from "@/chat/markdown";
 import { Note, Rule } from "@/chat/components/note";
+import { RoomPicker, pickerItems, type PickerItem } from "@/chat/components/rooms";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
 import { Editor } from "@/chat/editor";
-import { COMMANDS, type Entry, type Media, type Member, type Message, type Store } from "@/chat/store";
+import { COMMANDS, type Entry, type Media, type Member, type Message, type RoomSummary, type Store } from "@/chat/store";
 import { themeByName, themeNames } from "@/chat/themes";
 
 /// Rank a candidate against what the user typed: prefix, then substring, then subsequence.
@@ -98,7 +99,7 @@ const computePopup = (editor: Editor, members: Map<string, Member>, me: string, 
 
 /// A joined/left line. They come in runs, and a run reads as one notice, so they sit tight
 /// against each other and only the last of them takes the line of air.
-const isSystem = (entry?: Entry): boolean => entry?.type === "message" && entry.msg.kind === "system";
+const isSystem = (entry?: Entry): boolean => entry?.type === "note" || (entry?.type === "message" && entry.msg.kind === "system");
 
 /// The chat keeps a gutter down its left, so nothing starts hard against the terminal edge.
 const GUTTER = 2;
@@ -110,7 +111,7 @@ const EntryView = ({ entry, members, nameW, state, width, body, selection }: { e
     case "message":
       return <MessageLine msg={entry.msg} grouped={entry.grouped} members={members} nameW={nameW} width={width} top={body.top} left={body.left} selection={selection} />;
     case "note":
-      return <Note text={entry.text} tone={entry.tone} />;
+      return <Note text={entry.text} tone={entry.tone} ts={entry.ts} />;
     case "rule":
       return <Rule text={entry.text} />;
     case "members":
@@ -133,6 +134,11 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const [, bump] = useState(0);
   const redraw = useCallback(() => bump((n) => n + 1), []);
   const [popup, setPopup] = useState<PopupState>(EMPTY_POPUP);
+  // The room list, in place of the conversation: ← on an empty line opens it, the input
+  // filters it or names a new room, ↑↓ choose, enter or → open, esc or ← go back.
+  const [picker, setPicker] = useState<{ rooms: RoomSummary[]; index: number } | null>(null);
+  const pickerRef = useRef(picker);
+  pickerRef.current = picker;
   const lastEsc = useRef(0);
   const firstSize = useRef(true);
 
@@ -160,7 +166,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   }, [columns, rows, stdout, redraw]);
 
   const refresh = useCallback(() => {
-    setPopup((p) => computePopup(editor, store.state.members, store.state.me.name, p));
+    // in the room list the input is a room name, not a message: no @ or / popup
+    setPopup((p) => (pickerRef.current ? EMPTY_POPUP : computePopup(editor, store.state.members, store.state.me.name, p)));
     redraw();
   }, [editor, store, redraw]);
 
@@ -225,7 +232,6 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const contentH = content.hasMeasured ? content.height : 0;
   const viewH = view.hasMeasured ? view.height : 0;
   const maxOffset = Math.max(0, contentH - viewH);
-  const gap = Math.max(0, viewH - contentH);
   const maxRef = useRef(0);
   maxRef.current = maxOffset;
   const scrollBy = useCallback((lines: number) => {
@@ -299,7 +305,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const [bodyTops, setBodyTops] = useState<Record<string, { top: number; left: number }>>({});
   useEffect(() => {
     const content = contentRef.current;
-    if (!content) return;
+    if (!content || pickerRef.current) return;
     const next: Record<string, { top: number; left: number }> = {};
     for (const [i, child] of content.childNodes.entries()) {
       const entry = clickState.current.log[i];
@@ -387,6 +393,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
 
   const onClick = useCallback(
     (row: number, col: number) => {
+      if (pickerRef.current) return;
       const { room, members: list, me } = clickState.current;
       const act = feedAction(row, col);
       if (act) {
@@ -523,6 +530,36 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (insert) editor.insert(insert);
       return refresh();
     }
+    if (pickerRef.current) {
+      const p = pickerRef.current;
+      const items = pickerItems(p.rooms, editor.text, store.state.room);
+      const closePicker = () => {
+        setPicker(null);
+        editor.clear();
+        setPopup(EMPTY_POPUP);
+        redraw();
+      };
+      if (key.escape || (key.leftArrow && !editor.text)) return closePicker();
+      if (key.upArrow || key.downArrow) {
+        if (!items.length) return;
+        setPicker({ ...p, index: (Math.min(p.index, items.length - 1) + (key.upArrow ? -1 : 1) + items.length) % items.length });
+        return;
+      }
+      if (key.return || (key.rightArrow && editor.cursor >= editor.text.length)) {
+        const item: PickerItem | undefined = items[Math.min(p.index, items.length - 1)];
+        if (!item) return;
+        closePicker();
+        void store.switchRoom(item.room).then(toBottom);
+        return;
+      }
+      // anything else edits the name; the choice goes back to the top of what matches
+      if (input && !key.ctrl && !key.meta) setPicker({ ...p, index: 0 });
+      if (key.backspace || key.delete) setPicker({ ...p, index: 0 });
+    } else if (key.leftArrow && !editor.text && popup.kind === null && !forwardRef.current) {
+      setPicker({ rooms: [], index: 0 });
+      void store.rooms().then((rooms) => setPicker((cur) => (cur ? { rooms, index: Math.max(0, pickerItems(rooms, "", store.state.room).findIndex((i) => i.room === store.state.room)) } : cur)));
+      return;
+    }
     if (key.escape) {
       const twice = Date.now() - lastEsc.current < 900;
       lastEsc.current = Date.now();
@@ -623,13 +660,18 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     // input and the bottom line is never cleared before a redraw.
     <Box flexDirection="column" width={columns} height={rows - 1} paddingLeft={GUTTER}>
       <Box ref={viewRef} flexGrow={1} flexShrink={1} overflowY="hidden" flexDirection="column">
-        {/* short conversation: hug the bottom. long one: the offset scrolls it */}
-        <Box ref={contentRef} flexDirection="column" flexShrink={0} marginTop={gap - offset}>
+        {/* The conversation is pinned to the bottom of the view and scrolled back by how far the
+            reader is above the end. Absolute, so its height is its entries' alone: laid out in
+            the flow, a margin that took the free space (an empty log: all of it) squeezed the
+            entries that arrived next to zero rows, and a margin that followed the offset fed
+            back into the height it was computed from. The room list takes its place while open. */}
+        <Box ref={contentRef} position="absolute" left={0} right={0} bottom={picker ? 0 : offset - maxOffset} flexDirection="column" flexShrink={0}>
+          {picker && <RoomPicker rooms={picker.rooms} filter={editor.text} index={picker.index} current={state.room} height={viewH} />}
           {/* one box per entry, so a click can be traced back to its entry */}
-          {state.log.map((entry, i) => (
+          {!picker && state.log.map((entry, i) => (
             // a message ends with a line of air, so the action row does not touch what follows;
             // a joined/left line only when the next line is not another one of them
-            <Box key={entry.id} flexDirection="column" flexShrink={0} marginBottom={entry.type === "message" && !(isSystem(entry) && isSystem(state.log[i + 1])) ? 1 : 0}>
+            <Box key={entry.id} flexDirection="column" flexShrink={0} marginBottom={(entry.type === "message" || entry.type === "note") && !(isSystem(entry) && isSystem(state.log[i + 1])) ? 1 : 0}>
               <EntryView entry={entry} members={members} nameW={nameW} state={state} width={columns - GUTTER} body={bodyTops[entry.id] ?? { top: -1000, left: 0 }} selection={selection} />
             </Box>
           ))}
@@ -638,7 +680,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       <Box ref={liveRef} flexDirection="column" flexShrink={0}>
         <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
-        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={`message ${state.room} · @ for agents · / for commands`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
+        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={picker ? "filter, or name a new room · ↑↓ choose · enter opens · esc back" : `message ${state.room} · @ for agents · / for commands · ← rooms`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
         <Footer text={editor.text} busy={state.busy} status={state.status} members={members} room={state.room} attachments={pending.length} frame={frame} />
       </Box>
     </Box>
