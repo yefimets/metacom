@@ -55,6 +55,16 @@ const main = async () => {
     await a.type(a.key.enter, 800);
     await b.wait(/ann ▁▁/);
     show(a, 'ann: muted');
+    // devices: this box may have nothing to list, which is said, not a crash; a name still goes
+    await b.type('/devices');
+    await b.type(b.key.enter, 1500);
+    await b.wait(/audio devices|no pactl|system_profiler/);
+    await b.type('/output Test Box');
+    await b.type(b.key.enter, 800);
+    await b.wait(/sound: Test Box/);
+    const prefs = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'metacom-hub', 'voice.json'), 'utf8'));
+    if (prefs.output !== 'Test Box') throw new Error(`output not saved: ${JSON.stringify(prefs)}`);
+    show(b, 'bob: /output');
     await b.type('/voice off');
     await b.type(b.key.enter, 300);
     await a.wait(/bob left the call/);

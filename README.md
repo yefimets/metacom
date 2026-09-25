@@ -87,6 +87,9 @@ Directories:
   before a voice and 600 ms after), level speech toward -18 dBFS so a quiet mic is heard, and
   drop audio that falls more than 250 ms behind. `MC_VOICE_GATE` (default 120) is the least
   loudness that counts as talking.
+  `/devices` lists the mics and speakers (system_profiler on a Mac, pactl on Linux);
+  `/input 2`, `/output airpods` or `/output default` pick one, switch it live mid-call and
+  keep it in `~/.config/metacom-hub/voice.json`.
   `node cli/test/voice-e2e.js` runs a call end to end with a tone for a mic.
 - **Server-owned waits.** `metacom send Alex "…" --wait` returns when the turn ends (or reports
   `stalled` when the agent never started working); `metacom wait Alex` blocks until it is ready.

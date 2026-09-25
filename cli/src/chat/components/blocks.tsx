@@ -64,13 +64,13 @@ export const MemberRows = ({ members }: { members: Member[] }) => {
 };
 
 /// /read: the agent's screen in a quiet frame.
-export const Screen = ({ name, text }: { name: string; text: string }) => {
+export const Screen = ({ name, text, title }: { name: string; text: string; title?: string }) => {
   const theme = useTheme();
   const unicode = useUnicode();
   const lines = text.replace(/\s+$/, "").split("\n");
   return (
     <Box flexDirection="column" marginLeft={2} marginY={0}>
-      <Divider label={`${name} screen`} labelColor={theme.colors.foreground} color={theme.colors.border} />
+      <Divider label={title ?? `${name} screen`} labelColor={theme.colors.foreground} color={theme.colors.border} />
       <Box flexDirection="column" borderStyle={resolveBorderStyle("single", unicode)} borderColor={theme.colors.border} borderTop={false} borderRight={false} borderBottom={false} paddingLeft={1}>
         {lines.map((l, i) => (
           <Text key={i} color={theme.colors.mutedForeground} wrap="truncate-end">

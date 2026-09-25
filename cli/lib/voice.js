@@ -76,6 +76,89 @@ const variants = (which, candidates) => {
 // a tool that exits this soon after it started did not work, rather than stopped
 const QUICK_EXIT_MS = 1500;
 
+// MARK: devices
+
+/// The audio devices here, for /devices, /input and /output: { inputs, outputs } of
+/// { name, label, default }, or { error } where there is no way to ask. A Mac answers through
+/// system_profiler, Linux through PulseAudio or PipeWire (pactl).
+const listDevices = (run = spawnSync, platform = process.platform) => {
+  if (platform === 'darwin') {
+    const r = run('system_profiler', ['SPAudioDataType', '-json'], { encoding: 'utf8', timeout: 15_000 });
+    if (r.status !== 0 || !r.stdout) return { error: 'system_profiler did not answer' };
+    let items = [];
+    try {
+      items = (JSON.parse(r.stdout).SPAudioDataType || []).flatMap((x) => x._items || []);
+    } catch {
+      return { error: 'system_profiler gave something unreadable' };
+    }
+    const pick = (flag, def) => items.filter((d) => d[flag]).map((d) => ({ name: d._name, label: d._name, default: d[def] === 'spaudio_yes' }));
+    return { inputs: pick('coreaudio_device_input', 'coreaudio_default_audio_input_device'), outputs: pick('coreaudio_device_output', 'coreaudio_default_audio_output_device') };
+  }
+  const list = (kind) => {
+    const r = run('pactl', ['list', kind], { encoding: 'utf8', timeout: 5_000 });
+    if (r.status !== 0 || !r.stdout) return null;
+    return r.stdout
+      .split(/\n(?=\S)/)
+      .map((block) => ({ name: (block.match(/^\s*Name: (.+)$/m) || [])[1], label: (block.match(/^\s*Description: (.+)$/m) || [])[1] }))
+      .filter((d) => d.name && !d.name.endsWith('.monitor'))
+      .map((d) => ({ name: d.name, label: d.label || d.name, default: false }));
+  };
+  const inputs = list('sources');
+  const outputs = list('sinks');
+  if (!inputs || !outputs) return { error: 'no pactl here to list devices; /input and /output still take a device name' };
+  const info = run('pactl', ['info'], { encoding: 'utf8', timeout: 5_000 }).stdout || '';
+  const def = (what) => (info.match(new RegExp(`^Default ${what}: (.+)$`, 'm')) || [])[1];
+  for (const d of inputs) d.default = d.name === def('Source');
+  for (const d of outputs) d.default = d.name === def('Sink');
+  return { inputs, outputs };
+};
+
+/// What the user typed after /input or /output, as a device name: a number from /devices, a
+/// piece of a name, or "default" for the system's own choice (null).
+const resolveDevice = (arg, list) => {
+  const a = String(arg || '').trim();
+  if (!a || /^(default|system|auto)$/i.test(a)) return { name: null };
+  if (!list) return { name: a };
+  if (/^\d+$/.test(a)) {
+    const d = list[Number(a) - 1];
+    return d ? { name: d.name } : { error: `no device ${a} · /devices lists them` };
+  }
+  const exact = list.find((d) => d.name.toLowerCase() === a.toLowerCase() || d.label.toLowerCase() === a.toLowerCase());
+  if (exact) return { name: exact.name };
+  const found = list.filter((d) => `${d.name} ${d.label}`.toLowerCase().includes(a.toLowerCase()));
+  if (found.length === 1) return { name: found[0].name };
+  return { error: found.length ? `"${a}" matches ${found.map((d) => d.label).join(', ')} · say more` : `no device like "${a}" · /devices lists them` };
+};
+
+/// The command, its arguments and environment with a device chosen. sox (and a shell around
+/// it) reads AUDIODEV; the others take a flag.
+const withDevice = (cmd, args, device, platform = process.platform) => {
+  if (!device) return { args, env: {} };
+  const env = { AUDIODEV: device };
+  if (platform !== 'darwin' && ['rec', 'play', 'sox', 'sh'].includes(cmd)) env.AUDIODRIVER = 'pulseaudio';
+  if (cmd === 'pw-record' || cmd === 'pw-play') return { args: ['--target', device, ...args], env };
+  if (cmd === 'parec' || cmd === 'pacat') return { args: [`--device=${device}`, ...args], env };
+  if (cmd === 'arecord' || cmd === 'aplay') return { args: ['-D', device, ...args], env };
+  if (cmd === 'ffmpeg') return { args: args.map((a) => (a === ':default' ? `:${device}` : a === 'default' ? device : a)), env };
+  return { args, env };
+};
+
+/// The chosen devices, kept apart from the hub config so choosing one never rewrites a token.
+const prefsFile = () => require('node:path').join(require('node:os').homedir(), '.config', 'metacom-hub', 'voice.json');
+const loadPrefs = (file = prefsFile()) => {
+  try {
+    const p = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
+    return { input: p.input || null, output: p.output || null };
+  } catch {
+    return { input: null, output: null };
+  }
+};
+const savePrefs = (prefs, file = prefsFile()) => {
+  const fs = require('node:fs');
+  fs.mkdirSync(require('node:path').dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify({ input: prefs.input || null, output: prefs.output || null }, null, 2) + '\n', { mode: 0o600 });
+};
+
 const has = (cmd) => spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }).status === 0;
 
 /// What will record and what will play here, or why nothing can.
@@ -165,8 +248,9 @@ class Shaper {
 /// (frames from the hub -> per-speaker queues -> one mixed stream -> player).
 /// Events: 'speaking' (bool, this mic), 'error' (message; the call goes on without that half).
 class Audio extends EventEmitter {
-  constructor({ send, tools: picked = tools(), spawner = spawn, shape = {} } = {}) {
+  constructor({ send, tools: picked = tools(), spawner = spawn, shape = {}, devices = {} } = {}) {
     super();
+    this.devices = { input: devices.input || null, output: devices.output || null };
     this.send = send;
     this.tools = picked;
     this.spawner = spawner;
@@ -203,9 +287,11 @@ class Audio extends EventEmitter {
   /// says on stderr so a failure can be told in its own words.
   launch(which) {
     const list = variants(which, which === 'recorder' ? this.tools.recs || [this.tools.rec] : this.tools.plays || [this.tools.play]);
-    const [cmd, args] = list[Math.min(this.variant[which], list.length - 1)];
+    const [cmd, plain] = list[Math.min(this.variant[which], list.length - 1)];
+    const { args, env } = withDevice(cmd, plain, which === 'recorder' ? this.devices.input : this.devices.output);
     const child = this.spawner(cmd, args, {
       stdio: which === 'recorder' ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'ignore', 'pipe'],
+      env: { ...process.env, ...env },
     });
     child.startedAt = Date.now();
     child.said = '';
@@ -243,6 +329,25 @@ class Audio extends EventEmitter {
     if (this.speaking === on) return;
     this.speaking = on;
     this.emit('speaking', on);
+  }
+
+  /// Switch the mic or the speaker to another device (null: the system's), live: the tool
+  /// starts again on it, and anything that failed on the old one is tried afresh.
+  setDevice(kind, name) {
+    const which = kind === 'input' ? 'recorder' : 'player';
+    this.devices[kind] = name || null;
+    this.variant[which] = 0;
+    this.broken[which] = false;
+    const child = this[which];
+    this[which] = null;
+    if (child) {
+      if (which === 'player') child.stdin.end();
+      child.kill();
+    }
+    if (which === 'recorder' && this.wantMic) {
+      this.pending = Buffer.alloc(0);
+      this.startMic();
+    }
   }
 
   // MARK: speaker
@@ -343,4 +448,4 @@ class Audio extends EventEmitter {
   }
 }
 
-module.exports = { Audio, Shaper, tools, rms, mix, RATE, FRAME_BYTES, FRAME_MS };
+module.exports = { Audio, Shaper, tools, rms, mix, listDevices, resolveDevice, withDevice, loadPrefs, savePrefs, RATE, FRAME_BYTES, FRAME_MS };

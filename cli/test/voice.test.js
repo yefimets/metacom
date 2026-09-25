@@ -154,3 +154,76 @@ test('voice: no recorder is an error, not a crash', () => {
   assert.strictEqual(audio.startMic(), false);
   assert.match(errors[0], /brew install sox/);
 });
+
+const { listDevices, resolveDevice, withDevice, loadPrefs, savePrefs } = require('../lib/voice.js');
+
+test('voice: devices on a Mac come from system_profiler, with the system defaults marked', () => {
+  const json = { SPAudioDataType: [{ _items: [
+    { _name: 'MacBook Air Microphone', coreaudio_device_input: 1, coreaudio_default_audio_input_device: 'spaudio_yes' },
+    { _name: 'MacBook Air Speakers', coreaudio_device_output: 2, coreaudio_default_audio_output_device: 'spaudio_yes' },
+    { _name: 'AirPods Pro', coreaudio_device_input: 1, coreaudio_device_output: 2 },
+  ] }] };
+  const run = () => ({ status: 0, stdout: JSON.stringify(json) });
+  const d = listDevices(run, 'darwin');
+  assert.deepStrictEqual(d.inputs.map((x) => [x.name, x.default]), [['MacBook Air Microphone', true], ['AirPods Pro', false]]);
+  assert.deepStrictEqual(d.outputs.map((x) => [x.name, x.default]), [['MacBook Air Speakers', true], ['AirPods Pro', false]]);
+});
+
+test('voice: devices on Linux come from pactl, monitors left out', () => {
+  const out = {
+    sources: 'Source #1\n\tName: alsa_input.usb-mic\n\tDescription: USB Mic\nSource #2\n\tName: alsa_output.pci.monitor\n\tDescription: Monitor of Speakers\n',
+    sinks: 'Sink #3\n\tName: alsa_output.pci\n\tDescription: Speakers\n',
+    info: 'Default Sink: alsa_output.pci\nDefault Source: alsa_input.usb-mic\n',
+  };
+  const run = (cmd, args) => ({ status: 0, stdout: out[args[1] || args[0]] });
+  const d = listDevices(run, 'linux');
+  assert.deepStrictEqual(d.inputs, [{ name: 'alsa_input.usb-mic', label: 'USB Mic', default: true }]);
+  assert.deepStrictEqual(d.outputs, [{ name: 'alsa_output.pci', label: 'Speakers', default: true }]);
+});
+
+test('voice: /input and /output take a number, a piece of a name, or default', () => {
+  const list = [{ name: 'MacBook Air Speakers', label: 'MacBook Air Speakers' }, { name: 'AirPods Pro', label: 'AirPods Pro' }, { name: 'AirPods Max', label: 'AirPods Max' }];
+  assert.deepStrictEqual(resolveDevice('2', list), { name: 'AirPods Pro' });
+  assert.deepStrictEqual(resolveDevice('macbook', list), { name: 'MacBook Air Speakers' });
+  assert.deepStrictEqual(resolveDevice('default', list), { name: null });
+  assert.match(resolveDevice('airpods', list).error, /matches AirPods Pro, AirPods Max/);
+  assert.match(resolveDevice('9', list).error, /no device 9/);
+  assert.deepStrictEqual(resolveDevice('Some Box', null), { name: 'Some Box' }, 'no list: the name goes through');
+});
+
+test('voice: the chosen device reaches each tool its own way', () => {
+  assert.deepStrictEqual(withDevice('play', ['-q', '-'], 'AirPods Pro', 'darwin'), { args: ['-q', '-'], env: { AUDIODEV: 'AirPods Pro' } });
+  assert.deepStrictEqual(withDevice('pacat', ['--playback'], 'sink1', 'linux').args, ['--device=sink1', '--playback']);
+  assert.deepStrictEqual(withDevice('ffmpeg', ['-i', ':default'], 'AirPods Pro', 'darwin').args, ['-i', ':AirPods Pro']);
+  assert.deepStrictEqual(withDevice('play', ['-'], null), { args: ['-'], env: {} });
+});
+
+test('voice: switching the output mid-call starts the player again on the new device', () => {
+  const opts = [];
+  const spawner = (cmd, args, o) => {
+    opts.push(o);
+    const child = new EventEmitter();
+    child.stdin = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => child.emit('exit', null, 'SIGTERM');
+    return child;
+  };
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', ['-']], hint: '' }, spawner, devices: { output: 'MacBook Air Speakers' } });
+  const errors = [];
+  audio.on('error', (e) => errors.push(e));
+  audio.write(Buffer.alloc(640));
+  assert.strictEqual(opts[0].env.AUDIODEV, 'MacBook Air Speakers');
+  audio.setDevice('output', 'AirPods Pro');
+  audio.write(Buffer.alloc(640));
+  assert.strictEqual(opts[1].env.AUDIODEV, 'AirPods Pro');
+  assert.deepStrictEqual(errors, [], 'the old player being stopped is not an error');
+  audio.close();
+});
+
+test('voice: the device choice is kept in its own file', () => {
+  const file = require('node:path').join(require('node:os').tmpdir(), `voice-${process.pid}.json`);
+  assert.deepStrictEqual(loadPrefs(file), { input: null, output: null });
+  savePrefs({ input: 'AirPods Pro', output: null }, file);
+  assert.deepStrictEqual(loadPrefs(file), { input: 'AirPods Pro', output: null });
+  require('node:fs').unlinkSync(file);
+});

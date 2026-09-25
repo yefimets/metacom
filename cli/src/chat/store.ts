@@ -20,8 +20,17 @@ type AudioLike = {
   stopMic: () => void;
   play: (from: string, data: string) => void;
   close: () => void;
+  setDevice: (kind: "input" | "output", name: string | null) => void;
 };
-const voice = require("../../lib/voice.js") as { Audio: new (o: { send: (data: string) => void }) => AudioLike };
+type Device = { name: string; label: string; default: boolean };
+type Devices = { input: string | null; output: string | null };
+const voice = require("../../lib/voice.js") as {
+  Audio: new (o: { send: (data: string) => void; devices?: Devices }) => AudioLike;
+  listDevices: () => { inputs?: Device[]; outputs?: Device[]; error?: string };
+  resolveDevice: (arg: string, list: Device[] | null) => { name?: string | null; error?: string };
+  loadPrefs: () => Devices;
+  savePrefs: (p: Devices) => void;
+};
 
 export type Media = { url: string; type: string; size: number; name: string };
 export type Attachment = { file: string; name: string; type: string; size: number; token: string };
@@ -64,7 +73,7 @@ export type Entry =
   | { id: string; type: "message"; msg: Message; grouped: boolean }
   | { id: string; type: "note"; tone: Tone; text: string; ts: string }
   | { id: string; type: "members"; members: Member[] }
-  | { id: string; type: "screen"; name: string; text: string }
+  | { id: string; type: "screen"; name: string; text: string; title?: string }
   | { id: string; type: "rooms"; rooms: RoomSummary[] }
   | { id: string; type: "help" }
   | { id: string; type: "rule"; text: string };
@@ -101,6 +110,9 @@ export const COMMANDS = [
   { name: "save", args: "[n] [dir]", help: "save the latest file sent in the room (n = 2 is the one before) to ~/Downloads" },
   { name: "open", args: "[n]", help: "save the latest file and open it" },
   { name: "voice", args: "[on|off]", help: "join or leave the room's call (or click your name); headphones keep the echo out" },
+  { name: "devices", args: "", help: "the mics and speakers here, numbered for /input and /output" },
+  { name: "input", args: "[n|name|default]", help: "which mic the call uses; remembered, switches live" },
+  { name: "output", args: "[n|name|default]", help: "which speaker or headphones the call plays on; remembered, switches live" },
   { name: "mute", args: "", help: "turn your mic off or on again, staying in the call (or click the bars by your name)" },
   { name: "rooms", args: "", help: "all rooms with counts (or ← on an empty line)" },
   { name: "room", args: "<name>", help: "open another room, creating it if it is new" },
@@ -356,6 +368,7 @@ export class Store {
       send: (data) => {
         api.voice!.frame({ data }).catch(() => {});
       },
+      devices: voice.loadPrefs(),
     });
     audio.on("speaking", (on: boolean) => {
       if (this.state.call) this.set({ call: { ...this.state.call, speaking: on } });
@@ -694,6 +707,40 @@ export class Store {
         if (want && !this.state.call) await this.joinCall();
         else if (!want && this.state.call) await this.leaveCall();
         else this.setStatus(want ? "already in the call" : "not in a call", "plain", 2000);
+        break;
+      }
+      case "devices": {
+        const d = voice.listDevices();
+        if (d.error) return this.note(d.error, "warn");
+        const prefs = voice.loadPrefs();
+        const rows = (list: Device[], chosen: string | null) =>
+          list.map((x, i) => `  ${chosen === x.name ? "▸" : " "} ${i + 1}. ${x.label}${x.label !== x.name ? `  (${x.name})` : ""}${x.default ? "  · system default" : ""}`);
+        const text = [
+          `input  (mic)   now: ${prefs.input ?? "system default"}`,
+          ...rows(d.inputs ?? [], prefs.input),
+          "",
+          `output (sound) now: ${prefs.output ?? "system default"}`,
+          ...rows(d.outputs ?? [], prefs.output),
+          "",
+          "/input 2 · /output 3 · /output airpods · /input default",
+        ].join("\n");
+        this.push({ type: "screen", name: "audio", title: "audio devices", text });
+        break;
+      }
+      case "input":
+      case "output": {
+        const kind = cmd as "input" | "output";
+        const prefs = voice.loadPrefs();
+        if (!arg) return this.setStatus(`${kind}: ${prefs[kind] ?? "system default"} · /devices lists the others`, "plain", 4000);
+        const d = voice.listDevices();
+        const list = d.error ? null : (kind === "input" ? d.inputs : d.outputs) ?? null;
+        const pick = voice.resolveDevice(arg, list);
+        if (pick.error) return this.note(pick.error, "warn");
+        const name = pick.name ?? null;
+        voice.savePrefs({ ...prefs, [kind]: name });
+        this.audio?.setDevice(kind, name);
+        const label = name ? (list?.find((x) => x.name === name)?.label ?? name) : "the system default";
+        this.setStatus(`${kind === "input" ? "mic" : "sound"}: ${label}${this.audio ? "" : " · used from the next /voice"}`, "ok", 4000);
         break;
       }
       case "mute":

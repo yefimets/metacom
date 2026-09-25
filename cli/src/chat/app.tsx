@@ -117,7 +117,7 @@ const EntryView = ({ entry, members, nameW, state, width, body, selection }: { e
     case "members":
       return <MemberRows members={entry.members} />;
     case "screen":
-      return <Screen name={entry.name} text={entry.text} />;
+      return <Screen name={entry.name} text={entry.text} title={entry.title} />;
     case "rooms":
       return <Rooms rooms={entry.rooms} current={state.room} />;
     case "help":
