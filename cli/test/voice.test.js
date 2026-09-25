@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
-const { Audio, tools, rms, mix, FRAME_BYTES } = require('../lib/voice.js');
+const { Audio, Shaper, tools, rms, mix, FRAME_BYTES } = require('../lib/voice.js');
 
 const fakeSpawner = () => {
   const spawned = [];
@@ -43,22 +43,52 @@ test('voice: rms and mix', () => {
   assert.strictEqual(mix([tone(5, 4)], 8).readInt16LE(4), 0, 'a short speaker is padded with silence');
 });
 
-test('voice: the mic sends only while the voice is up, with a frame before and a tail after', () => {
+test('voice: the mic sends only while the voice is up, with a pre-roll before and a tail after', () => {
   const sent = [];
   const { spawned, spawner } = fakeSpawner();
-  const audio = new Audio({ send: (d) => sent.push(d), tools: { rec: ['rec', []], play: null, hint: '' }, spawner, gate: 500 });
+  const audio = new Audio({ send: (d) => sent.push(d), tools: { rec: ['rec', []], play: null, hint: '' }, spawner, shape: { preroll: 2, hangover: 4 } });
   const states = [];
   audio.on('speaking', (on) => states.push(on));
   assert.strictEqual(audio.startMic(), true);
   const rec = spawned[0];
-  rec.stdout.write(Buffer.concat([tone(10), tone(10)]));
+  rec.stdout.write(Buffer.concat([tone(10), tone(10), tone(10)]));
   assert.strictEqual(sent.length, 0, 'silence is not sent');
   rec.stdout.write(tone(2000).subarray(0, 100));
   rec.stdout.write(tone(2000).subarray(100));
-  assert.strictEqual(sent.length, 2, 'the quiet frame before speech goes too');
+  assert.strictEqual(sent.length, 3, 'the frames just before speech go too');
   for (let i = 0; i < 6; i++) rec.stdout.write(tone(10));
-  assert.strictEqual(sent.length, 2 + 4, 'four frames of hangover');
+  assert.strictEqual(sent.length, 3 + 4, 'four frames of hangover');
   assert.deepStrictEqual(states, [true, false]);
+  audio.close();
+});
+
+test('voice: quiet speech in a quiet room opens the gate and comes out levelled', () => {
+  const s = new Shaper();
+  for (let i = 0; i < 20; i++) s.push(tone(15)); // a quiet room
+  const quiet = s.push(tone(250)); // a soft voice, well under the old fixed gate of 600
+  assert.strictEqual(quiet.speaking, true);
+  let out = null;
+  for (let i = 0; i < 30; i++) out = s.push(tone(250)).frames.at(-1);
+  assert.ok(rms(out) > 1500, `levelled up, got ${Math.round(rms(out))}`);
+  const loud = s.push(tone(30000)).frames.at(-1);
+  assert.ok(Math.abs(loud.readInt16LE(0)) <= 32767 && rms(loud) < 32767, 'a shout is limited, not wrapped');
+});
+
+test('voice: steady noise raises the gate, so a fan does not hold the mic open', () => {
+  const s = new Shaper({ hangover: 2 });
+  let last = null;
+  for (let i = 0; i < 400; i++) last = s.push(tone(200));
+  assert.strictEqual(last.speaking, false, `gate ${Math.round(s.threshold)} over noise 200`);
+  assert.strictEqual(s.push(tone(3000)).speaking, true);
+});
+
+test('voice: a speaker who falls far behind is cut back, not played late', () => {
+  const { spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });
+  for (let i = 0; i < 30; i++) audio.play('bob', tone(100).toString('base64')); // 1.2 s arrives at once
+  clearInterval(audio.timer);
+  const q = audio.queues.get('bob');
+  assert.ok(q.buf.length <= 16000 * 2 * 0.25, `queued ${q.buf.length} bytes`);
   audio.close();
 });
 

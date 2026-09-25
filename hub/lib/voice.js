@@ -7,15 +7,16 @@ const { fail } = require('./errors.js');
 /// frames of at most FRAME_MS, base64 in the event. No codec to agree on, and a terminal
 /// client can pipe it straight into sox or ffmpeg.
 const RATE = 16_000;
-const FRAME_MS = 100;
+const FRAME_MS = 100; // the most a frame may hold; clients send 40
 const MAX_FRAME = Math.ceil(((RATE * 2 * FRAME_MS) / 1000) * 1.5); // bytes, with room for a late flush
 const MAX_B64 = Math.ceil(MAX_FRAME / 3) * 4;
 // Frames arrive only while someone talks (clients gate them on their own voice detection):
 // the hub calls a speaker quiet once their frames stop for this long.
 const QUIET_MS = 450;
-// Audio has its own budget, apart from the RPC one: 10 frames a second, with slack for bursts.
+// Audio has its own budget, apart from the RPC one: 25 frames a second, with slack for the
+// pre-roll a client sends when a voice starts.
 const FRAME_WINDOW = 2_000;
-const FRAME_CALLS = 60;
+const FRAME_CALLS = 150;
 
 /// Room calls, Discord style: anyone in a room can join its call, with the mic on or muted.
 /// Membership belongs to a connection (the chat window you joined from), the roster to names,

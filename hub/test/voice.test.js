@@ -87,7 +87,7 @@ test('voice: agents join only their own room, bad frames are refused, frames hav
   hub.voice.join(misha.conn, 'dev');
   assert.throws(() => hub.voice.frame(misha.conn, 'x'.repeat(100_000)), (e) => e.code === 400);
   assert.throws(() => {
-    for (let i = 0; i < 100; i++) hub.voice.frame(misha.conn, frame);
+    for (let i = 0; i < 200; i++) hub.voice.frame(misha.conn, frame);
   }, (e) => e.code === 429);
   hub.voice.quiet('dev', 'misha', false);
 });

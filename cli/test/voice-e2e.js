@@ -13,8 +13,9 @@ const port = 18900 + Math.floor(Math.random() * 1000);
 const token = 'voice-e2e-owner-' + Math.random().toString(36).slice(2);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-e2e-'));
 const heard = path.join(dir, 'bob-heard.raw');
-// 100 ms of a loud square wave every 100 ms, as a recorder would stream it
-const tone = `node -e "const b=Buffer.alloc(3200);for(let i=0;i<3200;i+=2)b.writeInt16LE(i%8<4?8000:-8000,i);setInterval(()=>process.stdout.write(b),100)"`;
+// 40 ms frames as a recorder would stream them: a square wave in "words" of 200 ms with 80 ms
+// pauses. A steady tone would not do: the gate takes anything without gaps for background noise.
+const tone = `node -e "const b=Buffer.alloc(1280),z=Buffer.alloc(1280);for(let i=0;i<1280;i+=2)b.writeInt16LE(i%8<4?8000:-8000,i);let n=0;setInterval(()=>process.stdout.write(n++%7<5?b:z),40)"`;
 
 const main = async () => {
   const hub = spawn(process.execPath, [path.join(__dirname, '..', '..', 'hub', 'server.js')], {

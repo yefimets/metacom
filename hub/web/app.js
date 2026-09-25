@@ -482,14 +482,50 @@ document.addEventListener('drop', (e) => {
 });
 
 // MARK: calls. The hub relays raw audio between everyone in a room's call: PCM16 mono at 16 kHz,
-// 100 ms to a frame, base64 — the same frames the terminal chat pipes through sox. The browser
+// 40 ms to a frame, base64 — the same frames the terminal chat pipes through sox. The browser
 // records with its own echo cancellation, sends only while the voice is up, and plays each
 // speaker on their own schedule so the voices mix in the audio graph.
 const VOICE_RATE = 16000;
-const FRAME = VOICE_RATE / 10;
-const GATE = 600; // RMS on the int16 scale, as in the terminal
-const HANGOVER = 4;
-const call = { room: null, mic: false, speaking: false, ctx: null, stream: null, node: null, pending: [], open: 0, previous: null, next: new Map(), roster: [] };
+const FRAME = (VOICE_RATE * 40) / 1000;
+// Voice detection and levelling, the same numbers as the terminal (cli/lib/voice.js): the gate
+// sits a margin over the room's noise floor (the quietest frame of the last 3 s), keeps 200 ms
+// from before the voice and 600 ms after it, and what passes is levelled toward -18 dBFS.
+const SHAPE = { minGate: 120, overFloor: 2.5, preroll: 5, hangover: 15, target: 4000, maxGain: 8, window: 75 };
+const call = { room: null, mic: false, speaking: false, ctx: null, stream: null, node: null, pending: [], next: new Map(), roster: [], shape: null };
+
+const newShape = () => ({ levels: [], gain: 1, open: 0, held: [] });
+
+const levelled = (frame, gain) => {
+  const out = new Int16Array(frame.length);
+  for (let i = 0; i < frame.length; i++) {
+    const x = (frame[i] * gain) / 32768;
+    const a = Math.abs(x);
+    const y = a < 0.5 ? x : Math.sign(x) * (0.5 + 0.5 * Math.tanh((a - 0.5) / 0.5));
+    out[i] = Math.round(Math.max(-1, Math.min(1, y)) * 32767);
+  }
+  return out;
+};
+
+/// One frame in; the frames to send out (none, this one, or the pre-roll and this one).
+const shapeFrame = (s, frame) => {
+  let e = 0;
+  for (const v of frame) e += v * v;
+  const level = Math.sqrt(e / frame.length);
+  s.levels.push(level);
+  if (s.levels.length > SHAPE.window) s.levels.shift();
+  const floor = Math.max(10, Math.min(...s.levels));
+  const loud = level >= Math.max(SHAPE.minGate, floor * SHAPE.overFloor);
+  if (loud) {
+    const want = Math.min(SHAPE.maxGain, Math.max(1, SHAPE.target / level));
+    s.gain = want < s.gain ? want : s.gain + (want - s.gain) * 0.15;
+  }
+  const wasOpen = s.open > 0;
+  if (loud) s.open = SHAPE.hangover + 1;
+  else if (s.open) s.open--;
+  const out = s.open > 0 ? (wasOpen ? [frame] : [...s.held, frame]) : [];
+  s.held = s.open > 0 ? [] : [...s.held, frame].slice(-SHAPE.preroll);
+  return { speaking: s.open > 0, frames: out.map((f) => levelled(f, s.gain)) };
+};
 
 const toBase64 = (int16) => {
   const bytes = new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength);
@@ -509,9 +545,10 @@ const sendFrame = (frame) => {
   if (state.hub) state.hub.call('voice/frame', { data: toBase64(frame) }).catch(() => {});
 };
 
-// Float samples at the context's rate, averaged down to 16 kHz int16, cut into 100 ms frames,
-// sent while loud (plus the frame before and a short tail) — silence costs nothing.
+// Float samples at the context's rate, averaged down to 16 kHz int16, cut into 40 ms frames,
+// shaped (gate and level) and sent while the voice is up — silence costs nothing.
 const captured = (input) => {
+  if (!call.shape) call.shape = newShape();
   const ratio = call.ctx.sampleRate / VOICE_RATE;
   for (let pos = 0; pos + ratio <= input.length; pos += ratio) {
     let sum = 0;
@@ -521,18 +558,8 @@ const captured = (input) => {
   }
   while (call.pending.length >= FRAME) {
     const frame = Int16Array.from(call.pending.splice(0, FRAME));
-    let e = 0;
-    for (const v of frame) e += v * v;
-    const loud = Math.sqrt(e / frame.length) >= GATE;
-    if (loud) {
-      if (!call.open && call.previous) sendFrame(call.previous);
-      call.open = HANGOVER + 1;
-    } else if (call.open) {
-      call.open--;
-    }
-    call.previous = frame;
-    if (call.open > 0) sendFrame(frame);
-    const speaking = call.open > 0;
+    const { speaking, frames } = shapeFrame(call.shape, frame);
+    for (const f of frames) sendFrame(f);
     if (speaking !== call.speaking) {
       call.speaking = speaking;
       renderCall();
@@ -542,6 +569,13 @@ const captured = (input) => {
 
 const heard = ({ room, from, data }) => {
   if (!call.ctx || room !== call.room) return;
+  const now = call.ctx.currentTime;
+  let at = call.next.get(from) || 0;
+  // more than 250 ms queued (a stall, then a burst): drop frames until it is back, rather
+  // than keep the whole call that far behind
+  if (at > now + 0.25) return;
+  // ran dry: start again 80 ms out, room for the next frames' jitter
+  if (at < now + 0.01) at = now + 0.08;
   const pcm = fromBase64(data);
   const buf = call.ctx.createBuffer(1, pcm.length, VOICE_RATE);
   const ch = buf.getChannelData(0);
@@ -549,10 +583,6 @@ const heard = ({ room, from, data }) => {
   const src = call.ctx.createBufferSource();
   src.buffer = buf;
   src.connect(call.ctx.destination);
-  // a little jitter buffer per speaker; fall behind and it starts over rather than drift
-  const now = call.ctx.currentTime;
-  let at = call.next.get(from) || 0;
-  if (at < now + 0.02 || at > now + 1) at = now + 0.12;
   src.start(at);
   call.next.set(from, at + buf.duration);
 };
@@ -566,9 +596,9 @@ const startMic = async () => {
     return false;
   }
   const source = call.ctx.createMediaStreamSource(call.stream);
-  // ScriptProcessor, not a worklet: a worklet is one more file under the CSP, and 4096 frames
-  // of latency on the way out is below what the network adds anyway
-  const node = call.ctx.createScriptProcessor(4096, 1, 1);
+  // ScriptProcessor, not a worklet: a worklet is one more file under the CSP. 2048 samples is
+  // ~43 ms at 48 kHz: small enough not to add delay, large enough not to stutter on a phone
+  const node = call.ctx.createScriptProcessor(2048, 1, 1);
   node.onaudioprocess = (e) => {
     if (call.mic) captured(e.inputBuffer.getChannelData(0));
   };
@@ -584,15 +614,14 @@ const stopMic = () => {
   if (call.stream) for (const t of call.stream.getTracks()) t.stop();
   call.stream = null;
   call.pending = [];
-  call.open = 0;
-  call.previous = null;
+  call.shape = null;
   call.speaking = false;
 };
 
 const joinCall = async () => {
   if (!state.room) return;
   // the audio context has to be made in the tap, or iOS keeps it silent
-  call.ctx = call.ctx || new (window.AudioContext || window.webkitAudioContext)();
+  call.ctx = call.ctx || new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
   await call.ctx.resume().catch(() => {});
   const mic = await startMic();
   call.room = state.room;

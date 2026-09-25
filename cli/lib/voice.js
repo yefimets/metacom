@@ -4,39 +4,54 @@ const { spawn, spawnSync } = require('node:child_process');
 const { EventEmitter } = require('node:events');
 
 /// Room calls from a terminal. The hub relays raw audio: PCM, signed 16-bit little-endian,
-/// mono, 16 kHz, 100 ms to a frame, base64. Node has no microphone or speaker of its own, so
+/// mono, 16 kHz, 40 ms to a frame, base64. Node has no microphone or speaker of its own, so
 /// a recorder and a player the machine already has do that part (sox on a Mac: brew install
-/// sox), and this file cuts, gates and mixes the bytes in between.
+/// sox), and this file cuts, gates, levels and mixes the bytes in between.
 const RATE = 16_000;
-const FRAME_BYTES = (RATE * 2) / 10; // 100 ms
+const FRAME_MS = 40;
+const FRAME_BYTES = (RATE * 2 * FRAME_MS) / 1000;
 const TICK_MS = 20;
-const PREBUFFER = (RATE * 2 * 120) / 1000; // bytes a speaker gathers before playing: jitter
-const MAX_QUEUE = RATE * 2; // one second per speaker at most; older audio is dropped
-const HANGOVER = 4; // frames kept open after the voice drops, so words are not clipped
-const GATE = Number(process.env.MC_VOICE_GATE) || 600; // RMS on the int16 scale, ~-35 dBFS
+const ms = (n) => Math.round((RATE * 2 * n) / 1000 / 2) * 2; // bytes of n milliseconds
+// A speaker gathers this much before playing (network jitter); past MAX_LAG the oldest audio
+// goes, so a burst after a stall does not leave the call running behind for good.
+const PREBUFFER = ms(80);
+const MAX_LAG = ms(250);
+const KEEP_LAG = ms(120);
+
+/// Voice detection and levelling, the same numbers as the phone (hub/web/app.js).
+const SHAPE = {
+  minGate: Number(process.env.MC_VOICE_GATE) || 120, // RMS on the int16 scale, the floor for the gate
+  overFloor: 2.5, // the gate opens this far above the room's noise
+  preroll: 5, // frames kept from before the voice, so the first syllable lands (200 ms)
+  hangover: 15, // frames kept open after it drops, so words and pauses are not clipped (600 ms)
+  target: 4000, // RMS of speech after levelling, about -18 dBFS
+  maxGain: 8,
+};
 
 const RAW = ['-t', 'raw', '-r', String(RATE), '-e', 'signed', '-b', '16', '-c', '1'];
+// sox reads and writes 8 KB at a time by default: 256 ms of this audio, each way
+const SOX_BUFFER = ['--buffer', String(FRAME_BYTES)];
 
 /// Recorder and player candidates, best first. Each writes or reads the wire format on
 /// stdin/stdout. MC_VOICE_REC / MC_VOICE_PLAY take a shell command that does the same.
 const CANDIDATES = {
   rec: [
-    ['rec', ['-q', ...RAW, '-']],
-    ['sox', ['-q', '-d', ...RAW, '-']],
-    ['pw-record', ['--rate', String(RATE), '--channels', '1', '--format', 's16', '-']],
-    ['parec', ['--rate', String(RATE), '--channels', '1', '--format', 's16le', '--latency-msec', '50']],
-    ['arecord', ['-q', '-f', 'S16_LE', '-r', String(RATE), '-c', '1', '-t', 'raw']],
+    ['rec', ['-q', ...SOX_BUFFER, ...RAW, '-']],
+    ['sox', ['-q', ...SOX_BUFFER, '-d', ...RAW, '-']],
+    ['pw-record', ['--latency', '40ms', '--rate', String(RATE), '--channels', '1', '--format', 's16', '-']],
+    ['parec', ['--rate', String(RATE), '--channels', '1', '--format', 's16le', '--latency-msec', '30']],
+    ['arecord', ['-q', '-f', 'S16_LE', '-r', String(RATE), '-c', '1', '-t', 'raw', '--buffer-time', '80000']],
     ['ffmpeg', process.platform === 'darwin'
-      ? ['-loglevel', 'quiet', '-f', 'avfoundation', '-i', ':default', '-ac', '1', '-ar', String(RATE), '-f', 's16le', '-']
-      : ['-loglevel', 'quiet', '-f', 'pulse', '-i', 'default', '-ac', '1', '-ar', String(RATE), '-f', 's16le', '-']],
+      ? ['-loglevel', 'quiet', '-fflags', 'nobuffer', '-f', 'avfoundation', '-i', ':default', '-ac', '1', '-ar', String(RATE), '-f', 's16le', '-']
+      : ['-loglevel', 'quiet', '-fflags', 'nobuffer', '-f', 'pulse', '-i', 'default', '-ac', '1', '-ar', String(RATE), '-f', 's16le', '-']],
   ],
   play: [
-    ['play', ['-q', ...RAW, '-']],
-    ['sox', ['-q', ...RAW, '-', '-d']],
-    ['pw-play', ['--rate', String(RATE), '--channels', '1', '--format', 's16', '-']],
-    ['pacat', ['--playback', '--rate', String(RATE), '--channels', '1', '--format', 's16le', '--latency-msec', '80']],
-    ['aplay', ['-q', '-f', 'S16_LE', '-r', String(RATE), '-c', '1', '-t', 'raw']],
-    ['ffplay', ['-loglevel', 'quiet', '-nodisp', '-f', 's16le', '-ar', String(RATE), '-ch_layout', 'mono', '-']],
+    ['play', ['-q', ...SOX_BUFFER, ...RAW, '-']],
+    ['sox', ['-q', ...SOX_BUFFER, ...RAW, '-', '-d']],
+    ['pw-play', ['--latency', '40ms', '--rate', String(RATE), '--channels', '1', '--format', 's16', '-']],
+    ['pacat', ['--playback', '--rate', String(RATE), '--channels', '1', '--format', 's16le', '--latency-msec', '40']],
+    ['aplay', ['-q', '-f', 'S16_LE', '-r', String(RATE), '-c', '1', '-t', 'raw', '--buffer-time', '80000']],
+    ['ffplay', ['-loglevel', 'quiet', '-nodisp', '-fflags', 'nobuffer', '-f', 's16le', '-ar', String(RATE), '-ch_layout', 'mono', '-']],
   ],
 };
 
@@ -77,23 +92,73 @@ const mix = (chunks, bytes) => {
   return out;
 };
 
+/// Decides which mic frames go out and how loud. The gate follows the room: it opens a margin
+/// above the noise floor it has measured, never below `minGate`, so a quiet mic in a quiet room
+/// still gets through and a fan does not hold it open. What passes is levelled toward `target`
+/// with a gain that rises slowly and falls at once, then soft-limited so it never clips.
+class Shaper {
+  constructor(opts = {}) {
+    this.o = { ...SHAPE, ...opts };
+    this.floor = this.o.minGate / this.o.overFloor;
+    this.gain = 1;
+    this.open = 0;
+    this.held = []; // pre-roll
+    this.levels = []; // the last 3 s, for the noise floor
+  }
+
+  get threshold() {
+    return Math.max(this.o.minGate, this.floor * this.o.overFloor);
+  }
+
+  /// One frame in, the frames to send out (none, this one, or the pre-roll and this one).
+  push(frame) {
+    const level = rms(frame);
+    // the noise floor is the quietest frame of the last 3 s: speech always has gaps between
+    // words, steady noise has none, so the floor finds the room either way
+    this.levels = [...this.levels, level].slice(-75);
+    this.floor = Math.max(10, Math.min(...this.levels));
+    const loud = level >= this.threshold;
+    if (loud) {
+      const want = Math.min(this.o.maxGain, Math.max(1, this.o.target / level));
+      this.gain = want < this.gain ? want : this.gain + (want - this.gain) * 0.15;
+    }
+    const wasOpen = this.open > 0;
+    if (loud) this.open = this.o.hangover + 1;
+    else if (this.open) this.open--;
+    let out = [];
+    if (this.open > 0) out = wasOpen ? [frame] : [...this.held, frame];
+    this.held = this.open > 0 ? [] : [...this.held, frame].slice(-this.o.preroll);
+    return { speaking: this.open > 0, frames: out.map((f) => this.level(f)) };
+  }
+
+  level(frame) {
+    const out = Buffer.alloc(frame.length);
+    for (let i = 0; i + 1 < frame.length; i += 2) {
+      const x = (frame.readInt16LE(i) * this.gain) / 32768;
+      // soft knee above ~-6 dBFS: tanh keeps peaks round instead of clipping them flat
+      const y = Math.abs(x) < 0.5 ? x : Math.sign(x) * (0.5 + 0.5 * Math.tanh((Math.abs(x) - 0.5) / 0.5));
+      out.writeInt16LE(Math.round(Math.max(-1, Math.min(1, y)) * 32767), i);
+    }
+    return out;
+  }
+}
+
 /// One terminal's part in a call: the mic (recorder -> frames -> `send`) and the speaker
 /// (frames from the hub -> per-speaker queues -> one mixed stream -> player).
 /// Events: 'speaking' (bool, this mic), 'error' (message; the call goes on without that half).
 class Audio extends EventEmitter {
-  constructor({ send, tools: picked = tools(), spawner = spawn, gate = GATE } = {}) {
+  constructor({ send, tools: picked = tools(), spawner = spawn, shape = {} } = {}) {
     super();
     this.send = send;
     this.tools = picked;
     this.spawner = spawner;
-    this.gate = gate;
+    this.shape = shape;
+    this.shaper = new Shaper(shape);
     this.recorder = null;
     this.player = null;
     this.pending = Buffer.alloc(0);
-    this.open = 0; // frames left before the gate closes
-    this.previous = null; // the frame before speech, sent with it so the first syllable lands
     this.speaking = false;
-    this.queues = new Map(); // speaker -> { buf, playing }
+    this.queues = new Map(); // speaker -> { buf, playing, last }
     this.timer = null;
     this.clock = null; // { t0, written } while the player is fed
   }
@@ -120,33 +185,19 @@ class Audio extends EventEmitter {
     this.recorder = null;
     if (child) child.kill();
     this.pending = Buffer.alloc(0);
-    this.open = 0;
-    this.previous = null;
+    this.shaper = new Shaper(this.shape);
     this.setSpeaking(false);
   }
 
   captured(chunk) {
     this.pending = Buffer.concat([this.pending, chunk]);
     while (this.pending.length >= FRAME_BYTES) {
-      const frame = this.pending.subarray(0, FRAME_BYTES);
+      const frame = Buffer.from(this.pending.subarray(0, FRAME_BYTES));
       this.pending = this.pending.subarray(FRAME_BYTES);
-      this.gateFrame(Buffer.from(frame));
+      const { speaking, frames } = this.shaper.push(frame);
+      for (const f of frames) this.send(f.toString('base64'));
+      this.setSpeaking(speaking);
     }
-  }
-
-  /// Send only while the voice is up (plus a little after), so a quiet room costs nothing
-  /// and the hub can tell who is talking from who is sending.
-  gateFrame(frame) {
-    const loud = rms(frame) >= this.gate;
-    if (loud) {
-      if (!this.open && this.previous) this.send(this.previous.toString('base64'));
-      this.open = HANGOVER + 1; // this frame, then HANGOVER quiet ones
-    } else if (this.open) {
-      this.open--;
-    }
-    this.previous = frame;
-    this.setSpeaking(this.open > 0);
-    if (this.open > 0) this.send(frame.toString('base64'));
   }
 
   setSpeaking(on) {
@@ -163,8 +214,9 @@ class Audio extends EventEmitter {
     if (!bytes.length) return;
     const q = this.queues.get(from) || { buf: Buffer.alloc(0), playing: false, last: 0 };
     q.buf = Buffer.concat([q.buf, bytes]);
+    // behind by more than MAX_LAG (a stall, then a burst): drop the oldest, back to KEEP_LAG
+    if (q.buf.length > MAX_LAG) q.buf = q.buf.subarray(q.buf.length - KEEP_LAG);
     q.last = Date.now();
-    if (q.buf.length > MAX_QUEUE) q.buf = q.buf.subarray(q.buf.length - MAX_QUEUE);
     this.queues.set(from, q);
     if (!this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
   }
@@ -173,7 +225,7 @@ class Audio extends EventEmitter {
   /// instead of letting the delay grow. Nothing to play: stop the clock, let the player drain.
   tick(now = Date.now()) {
     // a speaker starts once it has enough buffered, or once nothing more is coming
-    const live = [...this.queues.entries()].filter(([, q]) => q.playing || q.buf.length >= PREBUFFER || now - q.last > 150);
+    const live = [...this.queues.entries()].filter(([, q]) => q.playing || q.buf.length >= PREBUFFER || now - q.last > 100);
     if (!live.length) {
       this.clock = null;
       if (![...this.queues.values()].some((q) => q.buf.length)) {
@@ -183,7 +235,7 @@ class Audio extends EventEmitter {
       return null;
     }
     if (!this.clock) this.clock = { t0: now, written: 0 };
-    const due = Math.floor(((now - this.clock.t0) * RATE) / 1000) * 2 - this.clock.written + TICK_MS * (RATE / 1000) * 2;
+    const due = Math.floor(((now - this.clock.t0) * RATE) / 1000) * 2 - this.clock.written + ms(TICK_MS);
     if (due <= 0) return null;
     const chunks = [];
     for (const [name, q] of live) {
@@ -245,4 +297,4 @@ class Audio extends EventEmitter {
   }
 }
 
-module.exports = { Audio, tools, rms, mix, RATE, FRAME_BYTES };
+module.exports = { Audio, Shaper, tools, rms, mix, RATE, FRAME_BYTES, FRAME_MS };

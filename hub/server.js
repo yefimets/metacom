@@ -20,8 +20,13 @@ const port = Number(env.HUB_PORT || 8900);
 const dataDir = env.HUB_DATA || path.join(os.homedir(), '.local', 'share', 'metacom-hub');
 
 const stamp = () => new Date().toISOString().slice(11, 19);
+// metacom logs every call; audio frames come 25 a second per speaker and say nothing
+const noise = /\tCALL\tvoice\/frame\t/;
 const console = {
-  log: (...a) => process.stdout.write(`${stamp()} ${a.join(' ')}\n`),
+  log: (...a) => {
+    const line = a.join(' ');
+    if (!noise.test(line)) process.stdout.write(`${stamp()} ${line}\n`);
+  },
   info: (...a) => process.stdout.write(`${stamp()} ${a.join(' ')}\n`),
   warn: (...a) => process.stderr.write(`${stamp()} WARN ${a.join(' ')}\n`),
   error: (...a) => {

@@ -78,12 +78,15 @@ Directories:
   Everyone in the call gets two cells of level meter by their name: bars that move while
   their voice comes through, flat `▁▁` while the mic is open and quiet, struck through when
   muted. The phone has a VOICE button and a call strip; tap your own chip to mute. The hub
-  only relays: PCM16 mono 16 kHz in 100 ms frames, sent only while someone talks, so the
+  only relays: PCM16 mono 16 kHz in 40 ms frames, sent only while someone talks, so the
   speaking state is simply "frames are arriving". The terminal records and plays through
   what the machine has (sox first: `brew install sox`; then PipeWire, PulseAudio, ALSA,
   ffmpeg; or `MC_VOICE_REC` / `MC_VOICE_PLAY` as shell commands on raw PCM), the browser
   through its own echo-cancelled mic. Use headphones in the terminal: sox has no echo
-  cancellation. `MC_VOICE_GATE` (default 600) is the loudness that counts as talking.
+  cancellation. Both clients gate the mic a margin above the room's own noise (keeping 200 ms
+  before a voice and 600 ms after), level speech toward -18 dBFS so a quiet mic is heard, and
+  drop audio that falls more than 250 ms behind. `MC_VOICE_GATE` (default 120) is the least
+  loudness that counts as talking.
   `node cli/test/voice-e2e.js` runs a call end to end with a tone for a mic.
 - **Server-owned waits.** `metacom send Alex "…" --wait` returns when the turn ends (or reports
   `stalled` when the agent never started working); `metacom wait Alex` blocks until it is ready.
