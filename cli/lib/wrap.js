@@ -73,6 +73,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   const token = config.agentToken || config.token;
   if (!config.agentToken) process.stderr.write('metacom: no agent token in config, using the owner token (run: metacom token <name> --role agent --save)\n');
   const isClaude = path.basename(command) === 'claude';
+  const isCodex = path.basename(command) === 'codex';
   const cwd = process.cwd();
   const fullCommand = [command, ...args].join(' ');
   const gate = parseAccept(accept);
@@ -92,18 +93,26 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     .map((m) => `${m.name} on ${m.host || '?'}${m.repo ? ' in ' + m.repo : ''}, accepts ${Array.isArray(m.accept) ? m.accept.join(',') : m.accept || 'owner'}`);
 
   const extra = [];
+  // The room as MCP tools plus the room prompt, for the harnesses that take them. Without the
+  // tools an agent reads what is typed into it but can only answer on its own screen.
+  const bridge = {
+    command: process.execPath,
+    args: [path.join(__dirname, '..', 'bin', 'metacom.js'), 'mcp'],
+    env: { MC_HUB_URL: url, MC_TOKEN: token, MC_AGENT: name, MC_ROOM: room, MC_WRAPPER_PID: String(process.pid) },
+  };
   if (isClaude && mcp) {
-    const mcpConfig = {
-      mcpServers: {
-        hub: {
-          command: process.execPath,
-          args: [path.join(__dirname, '..', 'bin', 'metacom.js'), 'mcp'],
-          env: { MC_HUB_URL: url, MC_TOKEN: token, MC_AGENT: name, MC_ROOM: room, MC_WRAPPER_PID: String(process.pid) },
-        },
-      },
-    };
-    extra.push('--mcp-config', JSON.stringify(mcpConfig), '--append-system-prompt', roomPrompt(name, room, roster));
+    extra.push('--mcp-config', JSON.stringify({ mcpServers: { hub: bridge } }), '--append-system-prompt', roomPrompt(name, room, roster));
     if (!args.includes('--name') && !args.includes('-n')) extra.push('--name', name);
+  }
+  if (isCodex && mcp) {
+    // Codex reads `-c key=value` overrides as TOML; a JSON string is a valid TOML string
+    const env = Object.entries(bridge.env).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ');
+    extra.push(
+      '-c', `mcp_servers.hub.command=${JSON.stringify(bridge.command)}`,
+      '-c', `mcp_servers.hub.args=${JSON.stringify(bridge.args)}`,
+      '-c', `mcp_servers.hub.env={ ${env} }`,
+      '-c', `developer_instructions=${JSON.stringify(roomPrompt(name, room, roster))}`,
+    );
   }
 
   const cols = process.stdout.columns || 80;
