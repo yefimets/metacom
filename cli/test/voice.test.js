@@ -139,10 +139,11 @@ test('voice: a player that never works says why once, then stays off', () => {
     child.stderr.write('play FAIL formats: can\'t open output file `default\': no device\n');
     if (audio.player === child) child.emit('exit', 1);
   }
-  assert.strictEqual(spawned.length, 3, 'three variants, then no more');
-  assert.deepStrictEqual(spawned.map((c) => c.args), [['--buffer', '1280', '-'], ['--buffer', '4096', '-'], ['-']]);
+  assert.strictEqual(spawned.length, 4, 'four variants, then no more');
+  assert.deepStrictEqual(spawned.slice(0, 3).map((c) => c.args), [['--buffer', '1280', '-'], ['--buffer', '4096', '-'], ['-']]);
+  assert.deepStrictEqual(spawned[3].args, ['-c', "cat | exec 'play' '-'"], 'last, a real pipe instead of a socket');
   assert.strictEqual(errors.length, 1);
-  assert.match(errors[0], /speaker does not work: play exited with 1 · play FAIL formats/);
+  assert.match(errors[0], /speaker does not work \(tried 4 ways; the last: cat \| exec play - exited with code 1\) · play FAIL formats/);
   audio.close();
 });
 

@@ -55,14 +55,23 @@ const CANDIDATES = {
   ],
 };
 
-/// Ways to run a tool, best first. sox is asked for small buffers (less delay), but some audio
-/// drivers refuse one that small (CoreAudio output on a Mac quits at once): then a larger one,
-/// then sox's own default.
-const variants = (args) => {
-  const at = args.indexOf('--buffer');
-  if (at < 0) return [args];
-  const without = [...args.slice(0, at), ...args.slice(at + 2)];
-  return [args, [...args.slice(0, at), '--buffer', '4096', ...args.slice(at + 2)], without];
+const sh = (cmd, args) => [cmd, ...args].map((a) => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ');
+
+/// Every way to run the recorder or the player here, best first: each tool found, sox asked for
+/// small buffers first (less delay), then a larger one, then its own default, then the same
+/// behind `cat` — node hands a child a socket, not a pipe, and a player that will not read a
+/// socket gets a real pipe that way. The next tool only when all of those failed.
+const variants = (which, candidates) => {
+  const out = [];
+  for (const [cmd, args] of candidates) {
+    const at = args.indexOf('--buffer');
+    const sizes = at < 0 ? [args] : [args, [...args.slice(0, at), '--buffer', '4096', ...args.slice(at + 2)], [...args.slice(0, at), ...args.slice(at + 2)]];
+    for (const a of sizes) out.push([cmd, a]);
+    if (cmd === 'sh') continue;
+    const plain = sizes.at(-1);
+    out.push(['sh', ['-c', which === 'player' ? `cat | exec ${sh(cmd, plain)}` : `${sh(cmd, plain)} | cat`]]);
+  }
+  return out;
 };
 // a tool that exits this soon after it started did not work, rather than stopped
 const QUICK_EXIT_MS = 1500;
@@ -71,14 +80,11 @@ const has = (cmd) => spawnSync(process.platform === 'win32' ? 'where' : 'which',
 
 /// What will record and what will play here, or why nothing can.
 const tools = (env = process.env, exists = has) => {
-  const pick = (kind, override) => {
-    if (env[override]) return ['sh', ['-c', env[override]]];
-    return CANDIDATES[kind].find(([cmd]) => exists(cmd)) || null;
-  };
-  const rec = pick('rec', 'MC_VOICE_REC');
-  const play = pick('play', 'MC_VOICE_PLAY');
+  const all = (kind, override) => (env[override] ? [['sh', ['-c', env[override]]]] : CANDIDATES[kind].filter(([cmd]) => exists(cmd)));
+  const recs = all('rec', 'MC_VOICE_REC');
+  const plays = all('play', 'MC_VOICE_PLAY');
   const hint = process.platform === 'darwin' ? 'brew install sox' : 'apt install sox (or pulseaudio-utils, alsa-utils)';
-  return { rec, play, hint };
+  return { rec: recs[0] || null, play: plays[0] || null, recs, plays, hint };
 };
 
 /// Loudness of a frame of int16 samples, root mean square.
@@ -188,17 +194,17 @@ class Audio extends EventEmitter {
       return false;
     }
     if (this.broken.recorder) return false;
-    const child = this.launch('recorder', this.tools.rec);
+    const child = this.launch('recorder');
     child.stdout.on('data', (chunk) => this.captured(chunk));
     return true;
   }
 
   /// Start the recorder or the player with its current variant, keeping the end of what it
   /// says on stderr so a failure can be told in its own words.
-  launch(which, [cmd, args]) {
-    const list = variants(args);
-    const tried = this.variant[which];
-    const child = this.spawner(cmd, list[Math.min(tried, list.length - 1)], {
+  launch(which) {
+    const list = variants(which, which === 'recorder' ? this.tools.recs || [this.tools.rec] : this.tools.plays || [this.tools.play]);
+    const [cmd, args] = list[Math.min(this.variant[which], list.length - 1)];
+    const child = this.spawner(cmd, args, {
       stdio: which === 'recorder' ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'ignore', 'pipe'],
     });
     child.startedAt = Date.now();
@@ -206,8 +212,9 @@ class Audio extends EventEmitter {
     child.variants = list.length;
     if (child.stderr) child.stderr.on('data', (d) => (child.said = (child.said + d).slice(-300)));
     this[which] = child;
-    child.on('error', (e) => this.lost(which, child, e.message, cmd));
-    child.on('exit', (code) => this.lost(which, child, `exited${code ? ' with ' + code : ''}`, cmd));
+    const name = cmd === 'sh' ? String(args[1]).replace(/'/g, '').slice(0, 60) : cmd;
+    child.on('error', (e) => this.lost(which, child, e.message, name));
+    child.on('exit', (code, signal) => this.lost(which, child, signal ? `was killed by ${signal}` : `exited with code ${code}`, name));
     return child;
   }
 
@@ -293,7 +300,7 @@ class Audio extends EventEmitter {
         this.emit('error', `no player for the speaker · ${this.tools.hint}`);
         return;
       }
-      this.launch('player', this.tools.play).stdin.on('error', () => {});
+      this.launch('player').stdin.on('error', () => {});
     }
     this.player.stdin.write(buf);
   }
@@ -314,7 +321,7 @@ class Audio extends EventEmitter {
         return;
       }
       this.broken[which] = true;
-      this.emit('error', `${part} does not work: ${cmd} ${why}${said ? ' · ' + said : ''} · MC_VOICE_${which === 'recorder' ? 'REC' : 'PLAY'} sets another command`);
+      this.emit('error', `${part} does not work (tried ${child.variants} ways; the last: ${cmd} ${why})${said ? ' · ' + said : ''} · MC_VOICE_${which === 'recorder' ? 'REC' : 'PLAY'} sets another command`);
       return;
     }
     this.emit('error', `${part} stopped: ${cmd} ${why}${said ? ' · ' + said : ''}`);
