@@ -1,0 +1,91 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
+const { Audio, tools, rms, mix, FRAME_BYTES } = require('../lib/voice.js');
+
+const fakeSpawner = () => {
+  const spawned = [];
+  const spawner = (cmd, args) => {
+    const child = new EventEmitter();
+    child.cmd = cmd;
+    child.stdout = new PassThrough();
+    child.stdin = new PassThrough();
+    child.written = [];
+    child.stdin.on('data', (b) => child.written.push(b));
+    child.kill = () => child.emit('exit', null);
+    spawned.push(child);
+    return child;
+  };
+  return { spawned, spawner };
+};
+
+const tone = (amp, bytes = FRAME_BYTES) => {
+  const b = Buffer.alloc(bytes);
+  for (let i = 0; i < bytes; i += 2) b.writeInt16LE(i % 4 ? amp : -amp, i);
+  return b;
+};
+
+test('voice: tools picks the first recorder and player found, env overrides win', () => {
+  const found = tools({}, (cmd) => cmd === 'rec' || cmd === 'pacat');
+  assert.strictEqual(found.rec[0], 'rec');
+  assert.strictEqual(found.play[0], 'pacat');
+  assert.strictEqual(tools({}, () => false).rec, null);
+  assert.deepStrictEqual(tools({ MC_VOICE_PLAY: 'my-player' }, () => false).play, ['sh', ['-c', 'my-player']]);
+});
+
+test('voice: rms and mix', () => {
+  assert.strictEqual(Math.round(rms(tone(1000))), 1000);
+  const out = mix([tone(30000, 8), tone(30000, 8)], 8);
+  assert.strictEqual(out.readInt16LE(0), -32768, 'clipped, not wrapped');
+  assert.strictEqual(mix([tone(5, 4)], 8).readInt16LE(4), 0, 'a short speaker is padded with silence');
+});
+
+test('voice: the mic sends only while the voice is up, with a frame before and a tail after', () => {
+  const sent = [];
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: (d) => sent.push(d), tools: { rec: ['rec', []], play: null, hint: '' }, spawner, gate: 500 });
+  const states = [];
+  audio.on('speaking', (on) => states.push(on));
+  assert.strictEqual(audio.startMic(), true);
+  const rec = spawned[0];
+  rec.stdout.write(Buffer.concat([tone(10), tone(10)]));
+  assert.strictEqual(sent.length, 0, 'silence is not sent');
+  rec.stdout.write(tone(2000).subarray(0, 100));
+  rec.stdout.write(tone(2000).subarray(100));
+  assert.strictEqual(sent.length, 2, 'the quiet frame before speech goes too');
+  for (let i = 0; i < 6; i++) rec.stdout.write(tone(10));
+  assert.strictEqual(sent.length, 2 + 4, 'four frames of hangover');
+  assert.deepStrictEqual(states, [true, false]);
+  audio.close();
+});
+
+test('voice: frames from two speakers are buffered, then mixed into one player', () => {
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', []], hint: '' }, spawner });
+  const now = Date.now();
+  audio.play('bob', tone(100).toString('base64'));
+  audio.play('eve', tone(200).toString('base64'));
+  clearInterval(audio.timer);
+  assert.strictEqual(audio.tick(now), null, 'one frame is not enough to start on');
+  audio.play('bob', tone(100).toString('base64'));
+  audio.play('eve', tone(200).toString('base64'));
+  const first = audio.tick(now + 1000);
+  assert.ok(first && first.length > 0);
+  assert.strictEqual(first.readInt16LE(0), -300, 'both voices in one sample');
+  assert.strictEqual(spawned[0].cmd, 'play');
+  assert.strictEqual(audio.tick(now + 1000), null, 'nothing more is due at the same instant');
+  const later = audio.tick(now + 1100);
+  assert.ok(later.length > 0);
+  audio.close();
+});
+
+test('voice: no recorder is an error, not a crash', () => {
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: null, hint: 'brew install sox' } });
+  const errors = [];
+  audio.on('error', (e) => errors.push(e));
+  assert.strictEqual(audio.startMic(), false);
+  assert.match(errors[0], /brew install sox/);
+});

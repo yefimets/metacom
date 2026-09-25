@@ -72,6 +72,19 @@ Directories:
 - **Control commands** from the owner act at once and are never typed as text: `!cancel` (Esc),
   `!keys enter|esc|up|down|y`, `!type text`, `!stop`. They are how you answer a blocked agent
   from the phone or from Jev.
+- **Room calls.** Every room has a voice call, Discord style. In the terminal chat, `/voice`
+  or a click on your own name (bottom right) joins it with the mic on; `/mute` or a click on
+  the bars in front of your name mutes; `/voice off` or another click on the name leaves.
+  Everyone in the call gets two cells of level meter by their name: bars that move while
+  their voice comes through, flat `▁▁` while the mic is open and quiet, struck through when
+  muted. The phone has a VOICE button and a call strip; tap your own chip to mute. The hub
+  only relays: PCM16 mono 16 kHz in 100 ms frames, sent only while someone talks, so the
+  speaking state is simply "frames are arriving". The terminal records and plays through
+  what the machine has (sox first: `brew install sox`; then PipeWire, PulseAudio, ALSA,
+  ffmpeg; or `MC_VOICE_REC` / `MC_VOICE_PLAY` as shell commands on raw PCM), the browser
+  through its own echo-cancelled mic. Use headphones in the terminal: sox has no echo
+  cancellation. `MC_VOICE_GATE` (default 600) is the loudness that counts as talking.
+  `node cli/test/voice-e2e.js` runs a call end to end with a tone for a mic.
 - **Server-owned waits.** `metacom send Alex "…" --wait` returns when the turn ends (or reports
   `stalled` when the agent never started working); `metacom wait Alex` blocks until it is ready.
 - **One log per room.** Every message, directed or not, plus system events (`Alex joined`,

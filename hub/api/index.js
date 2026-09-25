@@ -56,6 +56,16 @@ const buildApi = ({ hub, auth, console, assistant }) => {
         return hub.rooms();
       }),
     },
+    voice: {
+      join: method(async ({ room, mic, ...rest } = {}, context) => hub.voice.join(hub.identify(context, rest), room, mic !== false)),
+      mic: method(async ({ on, ...rest } = {}, context) => hub.voice.mic(hub.identify(context, rest), on !== false)),
+      leave: method(async (args = {}, context) => hub.voice.leave(hub.identify(context, args))),
+      frame: method(async ({ data, ...rest } = {}, context) => hub.voice.frame(hub.identify(context, rest, { tick: false }), data)),
+      calls: method(async (args = {}, context) => {
+        hub.identify(context, args);
+        return hub.voice.calls();
+      }),
+    },
     assistant: {
       ask: method(async ({ token, ...args } = {}, context) => {
         const conn = hub.identify(context, { token });

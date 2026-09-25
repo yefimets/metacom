@@ -481,8 +481,187 @@ document.addEventListener('drop', (e) => {
   for (const f of e.dataTransfer.files) addFile(f);
 });
 
+// MARK: calls. The hub relays raw audio between everyone in a room's call: PCM16 mono at 16 kHz,
+// 100 ms to a frame, base64 — the same frames the terminal chat pipes through sox. The browser
+// records with its own echo cancellation, sends only while the voice is up, and plays each
+// speaker on their own schedule so the voices mix in the audio graph.
+const VOICE_RATE = 16000;
+const FRAME = VOICE_RATE / 10;
+const GATE = 600; // RMS on the int16 scale, as in the terminal
+const HANGOVER = 4;
+const call = { room: null, mic: false, speaking: false, ctx: null, stream: null, node: null, pending: [], open: 0, previous: null, next: new Map(), roster: [] };
+
+const toBase64 = (int16) => {
+  const bytes = new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+const fromBase64 = (b64) => {
+  const s = atob(b64);
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+  return new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+};
+
+const sendFrame = (frame) => {
+  if (state.hub) state.hub.call('voice/frame', { data: toBase64(frame) }).catch(() => {});
+};
+
+// Float samples at the context's rate, averaged down to 16 kHz int16, cut into 100 ms frames,
+// sent while loud (plus the frame before and a short tail) — silence costs nothing.
+const captured = (input) => {
+  const ratio = call.ctx.sampleRate / VOICE_RATE;
+  for (let pos = 0; pos + ratio <= input.length; pos += ratio) {
+    let sum = 0;
+    let n = 0;
+    for (let j = Math.floor(pos); j < Math.floor(pos + ratio); j++, n++) sum += input[j];
+    call.pending.push(Math.max(-1, Math.min(1, n ? sum / n : input[Math.floor(pos)])) * 32767);
+  }
+  while (call.pending.length >= FRAME) {
+    const frame = Int16Array.from(call.pending.splice(0, FRAME));
+    let e = 0;
+    for (const v of frame) e += v * v;
+    const loud = Math.sqrt(e / frame.length) >= GATE;
+    if (loud) {
+      if (!call.open && call.previous) sendFrame(call.previous);
+      call.open = HANGOVER + 1;
+    } else if (call.open) {
+      call.open--;
+    }
+    call.previous = frame;
+    if (call.open > 0) sendFrame(frame);
+    const speaking = call.open > 0;
+    if (speaking !== call.speaking) {
+      call.speaking = speaking;
+      renderCall();
+    }
+  }
+};
+
+const heard = ({ room, from, data }) => {
+  if (!call.ctx || room !== call.room) return;
+  const pcm = fromBase64(data);
+  const buf = call.ctx.createBuffer(1, pcm.length, VOICE_RATE);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = call.ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(call.ctx.destination);
+  // a little jitter buffer per speaker; fall behind and it starts over rather than drift
+  const now = call.ctx.currentTime;
+  let at = call.next.get(from) || 0;
+  if (at < now + 0.02 || at > now + 1) at = now + 0.12;
+  src.start(at);
+  call.next.set(from, at + buf.duration);
+};
+
+const startMic = async () => {
+  if (call.stream) return true;
+  try {
+    call.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  } catch (error) {
+    toast(`mic: ${error.message || error.name}`);
+    return false;
+  }
+  const source = call.ctx.createMediaStreamSource(call.stream);
+  // ScriptProcessor, not a worklet: a worklet is one more file under the CSP, and 4096 frames
+  // of latency on the way out is below what the network adds anyway
+  const node = call.ctx.createScriptProcessor(4096, 1, 1);
+  node.onaudioprocess = (e) => {
+    if (call.mic) captured(e.inputBuffer.getChannelData(0));
+  };
+  source.connect(node);
+  node.connect(call.ctx.destination); // it only runs while connected; it writes silence
+  call.node = node;
+  return true;
+};
+
+const stopMic = () => {
+  if (call.node) call.node.disconnect();
+  call.node = null;
+  if (call.stream) for (const t of call.stream.getTracks()) t.stop();
+  call.stream = null;
+  call.pending = [];
+  call.open = 0;
+  call.previous = null;
+  call.speaking = false;
+};
+
+const joinCall = async () => {
+  if (!state.room) return;
+  // the audio context has to be made in the tap, or iOS keeps it silent
+  call.ctx = call.ctx || new (window.AudioContext || window.webkitAudioContext)();
+  await call.ctx.resume().catch(() => {});
+  const mic = await startMic();
+  call.room = state.room;
+  call.mic = mic;
+  const s = await state.hub.call('voice/join', { room: state.room, mic });
+  onVoice(s);
+  if (!mic) toast('listening only: the mic is not allowed');
+};
+
+const leaveCall = async () => {
+  if (!call.room) return;
+  stopMic();
+  call.room = null;
+  call.mic = false;
+  call.next.clear();
+  renderCall();
+  await state.hub.call('voice/leave', {}).catch(() => {});
+};
+
+const toggleMic = async () => {
+  if (!call.room) return;
+  const on = !call.mic;
+  if (on && !(await startMic())) return;
+  if (!on) stopMic();
+  call.mic = on;
+  renderCall();
+  await state.hub.call('voice/mic', { on }).catch((e) => toast(e.message));
+};
+
+const onVoice = ({ room, participants }) => {
+  if (room !== state.room) return;
+  call.roster = participants;
+  renderCall();
+};
+
+const renderCall = () => {
+  const box = $('call');
+  box.replaceChildren();
+  $('voice').textContent = call.room ? 'leave' : 'voice';
+  $('voice').classList.toggle('on', Boolean(call.room));
+  const me = state.me && state.me.name;
+  for (const p of call.roster) {
+    const mine = call.room && p.name === me;
+    const mic = mine ? call.mic : p.mic;
+    const speaking = mine ? call.mic && call.speaking : p.speaking;
+    const chip = el('div', `caller${mine ? ' me' : ''}${mic ? '' : ' muted'}${speaking ? ' speaking' : ''}`);
+    const bars = el('span', 'bars');
+    bars.append(el('i'), el('i'), el('i'));
+    chip.append(bars, el('span', 'who', p.name));
+    if (mine) {
+      chip.title = call.mic ? 'tap to mute' : 'tap to unmute';
+      chip.onclick = () => toggleMic();
+    }
+    box.append(chip);
+  }
+};
+
+$('voice').onclick = () => (call.room ? leaveCall() : joinCall()).catch((e) => toast(e.message));
+
 const loadRoom = async (room) => {
+  if (call.room && call.room !== room) await leaveCall();
   state.room = room;
+  call.roster = [];
+  renderCall();
+  if (state.hub) {
+    const calls = await state.hub.call('voice/calls', {}).catch(() => []);
+    const here = calls.find((c) => c.room === room);
+    if (here) onVoice(here);
+  }
   store.set('hub.room', room);
   $('stream').replaceChildren(el('div', 'empty', 'no messages'));
   scroll.pinned = true;
@@ -501,7 +680,11 @@ const start = async (token) => {
     $('state').textContent = on ? 'room' : 'offline';
     $('state').classList.toggle('on', on);
     $('headLogo').classList.toggle('spin', !on);
+    // a reconnect is a new connection: the hub no longer has it in the call
+    if (on && call.room) hub.call('voice/join', { room: call.room, mic: call.mic }).then(onVoice).catch(() => {});
   };
+  hub.on('voice/changed', onVoice);
+  hub.on('voice/frame', heard);
   hub.on('agents/changed', ({ members }) => {
     state.members = members;
     renderAgents();

@@ -16,9 +16,9 @@ import { bodyTextLines } from "@/chat/markdown";
 import { Note, Rule } from "@/chat/components/note";
 import { MemberPicker, RoomPicker, memberItems, pickerItems, type PickerItem } from "@/chat/components/rooms";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
-import { StatusBar, segments } from "@/chat/components/status-bar";
+import { StatusBar, mine, segments } from "@/chat/components/status-bar";
 import { Editor } from "@/chat/editor";
-import { COMMANDS, type Entry, type Media, type Member, type Message, type RoomSummary, type Store } from "@/chat/store";
+import { COMMANDS, type Entry, type Media, type Member, type Message, type Participant, type RoomSummary, type Store } from "@/chat/store";
 import { themeByName, themeNames } from "@/chat/themes";
 
 /// Rank a candidate against what the user typed: prefix, then substring, then subsequence.
@@ -221,8 +221,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const mouse = state.mouse;
   const mouseRef = useRef(mouse);
   mouseRef.current = mouse;
-  const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[]; width: number }>({ room: "", members: new Map(), me: "", log: [], width: 80 });
-  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log, width: columns - GUTTER };
+  const clickState = useRef<{ room: string; members: Map<string, Member>; me: string; log: Entry[]; width: number; voice: Map<string, Participant> }>({ room: "", members: new Map(), me: "", log: [], width: 80, voice: new Map() });
+  clickState.current = { room: state.room, members: state.members, me: state.me.name, log: state.log, width: columns - GUTTER, voice: state.voice };
 
   // MARK: the scrollback. The conversation lives in a window this draws, not in the terminal's
   // own scrollback, so the input stays pinned at the bottom while the wheel moves the history.
@@ -397,7 +397,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const onClick = useCallback(
     (row: number, col: number) => {
       if (pickerRef.current) return;
-      const { room, members: list, me } = clickState.current;
+      const { room, members: list, me, voice, width } = clickState.current;
       const act = feedAction(row, col);
       if (act) {
         const { msg, action } = act;
@@ -426,9 +426,15 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       // the status line is the first row of the live area; the terminal counts rows from 1
       const liveBox = screenAt(liveRef.current);
       const statusRow = liveBox.top + 1;
-      const hit = segments(room, list, me).find((s) => col - 1 - liveBox.left >= s.start && col - 1 - liveBox.left < s.end);
+      const x = col - 1 - liveBox.left;
+      const hit = segments(room, list, me, voice).find((s) => x >= s.start && x < s.end);
       if (dbg) fs.appendFileSync(dbg, JSON.stringify({ row, col, statusRow, hit }) + "\n");
-      if (!hit || row !== statusRow) return;
+      if (row !== statusRow) return;
+      // my corner: the bars mute, my name joins or leaves the room's call
+      const own = mine(width, room, me);
+      if (x >= own.bars[0] && x < own.bars[1]) return void store.toggleMic().then(refresh);
+      if (x >= own.name[0] && x < own.name[1]) return void store.toggleCall().then(refresh);
+      if (!hit) return;
       address(hit.name);
     },
     [address, feedAction, feedName, editor, refresh, store]
@@ -678,7 +684,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const members = state.members;
   // The one spinner tick, at the root: every frame re-renders the tree down to the composer,
   // which keeps Ink placing the terminal cursor (it only does so on renders the composer joins).
-  const frame = useAnimation({ intervalMs: SPIN_INTERVAL, isActive: store.working });
+  const frame = useAnimation({ intervalMs: SPIN_INTERVAL, isActive: store.working || store.talking });
   const nameW = useMemo(() => Math.min(14, Math.max(6, ...[...members.values()].map((m) => terminalWidth(m.name)))), [members]);
   const width = Math.max(30, columns - GUTTER - 1);
   const footerRoom = rows - 3 - Math.min(6, editor.lines.length) - 3;
@@ -708,7 +714,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       </Box>
       <Box ref={liveRef} flexDirection="column" flexShrink={0}>
         {/* the member line belongs to the room you are in; the room list stands on its own */}
-        {!picker && <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />}
+        {!picker && <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} voice={state.voice} call={state.call} />}
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
         <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={picker ? (picker.room ? "filter · ↑↓ enter sends · ← rooms" : picker.forward ? "filter · ↑↓ enter · esc back" : "filter or new room · ↑↓ enter · esc back") : `message ${state.room} · @ for agents · / for commands · ← rooms`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
         <Footer text={editor.text} busy={state.busy} status={state.status} members={members} room={state.room} attachments={pending.length} frame={frame} />

@@ -82,6 +82,26 @@
   header .field { height: 32px; flex: 0 1 auto; min-width: 0; }
   header .field > select { padding: 0 26px 0 8px; font-size: 12px; text-transform: uppercase; text-overflow: ellipsis; }
 
+  /* call strip: who is in the room's call. Bars move while a voice comes through, lie flat
+     while a mic is open and quiet, and are struck through when muted. Tap your own to mute. */
+  #call { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--fg); flex: 0 0 auto; }
+  #call::-webkit-scrollbar { display: none; }
+  #call:empty { display: none; }
+  .caller { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-right: 1px solid var(--fg); white-space: nowrap; user-select: none; }
+  .caller.me { cursor: pointer; }
+  .caller.me .who::after { content: " (you)"; color: var(--dim); }
+  .caller.muted .who { color: var(--dim); }
+  .bars { display: inline-flex; align-items: flex-end; gap: 2px; width: 14px; height: 12px; flex: 0 0 auto; position: relative; }
+  .bars i { display: block; width: 3px; height: 2px; background: var(--fg); }
+  .caller.speaking .bars i { animation: talk .9s ease-in-out infinite; }
+  .caller.speaking .bars i:nth-child(2) { animation-delay: -.3s; }
+  .caller.speaking .bars i:nth-child(3) { animation-delay: -.6s; }
+  .caller.muted .bars i { background: var(--faint); }
+  .caller.muted .bars::after { content: ""; position: absolute; left: -2px; right: -2px; top: 50%; border-top: 1px solid var(--dim); transform: rotate(-35deg); }
+  @keyframes talk { 0%, 100% { height: 2px; } 50% { height: 12px; } }
+  @media (prefers-reduced-motion: reduce) { .caller.speaking .bars i { animation: none; height: 10px; } }
+  #voice.on { background: var(--bg); color: var(--fg); }
+
   /* agent strip */
   #agents { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--fg); flex: 0 0 auto; }
   #agents::-webkit-scrollbar { display: none; }
@@ -201,8 +221,10 @@
   <span class="spacer"></span>
   <span id="state" title="connection">offline</span>
   <label class="field select"><select id="room" aria-label="room"></select></label>
+  <button id="voice" class="btn" type="button" title="join this room's call">voice</button>
 </header>
 
+<div id="call" aria-label="call"></div>
 <div id="agents"></div>
 <div id="streamWrap">
   <div id="stream"><div class="empty">no messages</div></div>
