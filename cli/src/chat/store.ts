@@ -11,6 +11,8 @@ const media = require("../../lib/media.js") as {
   clipboardText: () => string;
   resolvePath: (raw: string) => string;
   upload: (o: { http: string; token: string | null; file: string }) => Promise<Media>;
+  saveAs: (o: { http: string; media: Media; dir?: string }) => Promise<string>;
+  openFile: (file: string) => boolean;
 };
 
 export type Media = { url: string; type: string; size: number; name: string };
@@ -82,6 +84,8 @@ export const COMMANDS = [
   { name: "keys", args: "<name> enter|esc|up|down|y", help: "press keys in the agent" },
   { name: "say", args: "<text>", help: "post to the room even if it starts with @ or /" },
   { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
+  { name: "save", args: "[n] [dir]", help: "save the latest file sent in the room (n = 2 is the one before) to ~/Downloads" },
+  { name: "open", args: "[n]", help: "save the latest file and open it" },
   { name: "rooms", args: "", help: "all rooms with counts" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
   { name: "mouse", args: "[on|off]", help: "clicking names and message buttons (off by default, so text selects)" },
@@ -487,6 +491,18 @@ export class Store {
         // handled in the app: the token has to land in the input
         this.note("usage: /attach <path> · or paste a path, or cmd+v an image from the clipboard", "warn");
         break;
+      case "save":
+      case "open": {
+        // `/save 2 ~/tmp`, `/save ~/tmp` or `/open`: files counted from the newest message back
+        const n = /^\d+$/.test(rest[0] || "") ? Number(rest.shift()) : 1;
+        const all = this.state.log.flatMap((e) => (e.type === "message" && e.msg.media ? e.msg.media : [])).reverse();
+        const m = all[n - 1];
+        if (!m) return this.note(all.length ? `only ${all.length} file${all.length === 1 ? "" : "s"} in view` : "no files in the room yet", "warn");
+        const file = await media.saveAs({ http: this.config.http, media: m, dir: cmd === "save" ? rest.join(" ") || undefined : undefined });
+        if (cmd === "open" && !media.openFile(file)) return this.note(`saved ${file}, but could not open it here`, "warn");
+        this.note(`${cmd === "open" ? "opened" : "saved"} ${file}`, "ok");
+        break;
+      }
       case "rooms":
         this.push({ type: "rooms", rooms: await api.room.list({}) });
         break;

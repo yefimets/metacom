@@ -16,6 +16,12 @@ const TYPES = {
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
   '.md': 'text/markdown',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.zip': 'application/zip',
+  '.log': 'text/plain',
+  '.diff': 'text/plain',
+  '.patch': 'text/plain',
 };
 const MEDIA_DIR = path.join(os.homedir(), '.local', 'share', 'metacom', 'media');
 
@@ -89,6 +95,31 @@ const download = async ({ http, url }) => {
   return file;
 };
 
+/// An attachment saved under its own name in `dir` (~/Downloads by default), without
+/// overwriting: `report.md`, then `report (1).md`. Returns the path.
+const saveAs = async ({ http, media, dir }) => {
+  const cached = await download({ http, url: media.url });
+  const into = resolvePath(dir || path.join(os.homedir(), 'Downloads'));
+  fs.mkdirSync(into, { recursive: true });
+  const name = path.basename(String(media.name || path.basename(cached))) || path.basename(cached);
+  const ext = path.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+  let file = path.join(into, name);
+  for (let i = 1; fs.existsSync(file); i++) file = path.join(into, `${stem} (${i})${ext}`);
+  fs.copyFileSync(cached, file);
+  return file;
+};
+
+/// Hand a file to the desktop: `open` on macOS, `xdg-open` elsewhere. False when that fails.
+const openFile = (file) => {
+  try {
+    execFileSync(process.platform === 'darwin' ? 'open' : 'xdg-open', [file], { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /// The text on the clipboard, or ''. The same tools as the image below.
 const clipboardText = () => {
   const run = (cmd, args) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024, timeout: 5000 }).toString();
@@ -151,4 +182,4 @@ const clipboardImage = () => {
 /// ` [shot.png 12 KB]` for message lines.
 const describe = (media) => (Array.isArray(media) && media.length ? ' ' + media.map((m) => `[${m.name} ${pretty(m.size || 0)}]`).join(' ') : '');
 
-module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, clipboardImage, clipboardText, copyText, describe, pretty };
+module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, saveAs, openFile, clipboardImage, clipboardText, copyText, describe, pretty };

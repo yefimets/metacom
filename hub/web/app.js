@@ -390,7 +390,9 @@ const renderMessage = (m) => {
 
 // MARK: attachments. Pasted, dropped or picked files wait in a strip above the input and
 // are uploaded (POST /media with the token) when the message is sent.
-const ACCEPT = /^(image\/(png|jpeg|gif|webp|heic|svg\+xml)|application\/pdf|text\/(plain|markdown))$/;
+const ACCEPT = /^(image\/(png|jpeg|gif|webp|heic|svg\+xml)|application\/(pdf|json|zip)|text\/(plain|markdown|csv))$/;
+// browsers leave the type empty or vendor-specific for some of these; go by the extension
+const BY_EXT = { md: 'text/markdown', csv: 'text/csv', json: 'application/json', zip: 'application/zip', log: 'text/plain', diff: 'text/plain', patch: 'text/plain', txt: 'text/plain' };
 const files = [];
 const renderFiles = () => {
   const box = $('files');
@@ -416,8 +418,8 @@ const renderFiles = () => {
 };
 const addFile = (file) => {
   if (!file) return;
-  const type = file.type || (file.name.endsWith('.md') ? 'text/markdown' : '');
-  if (!ACCEPT.test(type)) return toast(`${file.name || 'file'}: images, pdf and text only`);
+  const type = ACCEPT.test(file.type) ? file.type : BY_EXT[(file.name.split('.').pop() || '').toLowerCase()] || file.type;
+  if (!ACCEPT.test(type)) return toast(`${file.name || 'file'}: images, pdf, text, csv, json and zip only`);
   if (file.size > 20 * 1024 * 1024) return toast(`${file.name}: larger than 20 MB`);
   if (files.length >= 8) return toast('at most 8 files per message');
   files.push({ file, type, preview: type.startsWith('image/') ? URL.createObjectURL(file) : null });

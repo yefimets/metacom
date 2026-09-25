@@ -44,7 +44,8 @@ test('media: stored files ride on messages, unknown ones are refused', async () 
   assert.strictEqual(delivered.media[0].name, 'a b.png');
   assert.throws(() => hub.say(ownerConn, 'dev', 'x', [{ url: '/media/' + '0'.repeat(32) + '.png' }]), (e) => e.code === 400);
   assert.throws(() => hub.say(ownerConn, 'dev', '', []), (e) => e.code === 400);
-  assert.throws(() => hub.media.save(PNG, 'application/zip', 'x.zip'), (e) => e.code === 415);
+  assert.throws(() => hub.media.save(PNG, 'application/x-msdownload', 'x.exe'), (e) => e.code === 415);
+  for (const [type, ext] of [['text/csv', 'csv'], ['application/json', 'json'], ['application/zip', 'zip']]) assert.match(hub.media.save(PNG, type, 'r.' + ext).url, new RegExp('\\.' + ext + '$'));
 });
 
 test('media: POST /media needs a token and answers with the url, GET serves the bytes', async () => {
@@ -57,7 +58,7 @@ test('media: POST /media needs a token and answers with the url, GET serves the 
   try {
     const denied = await fetch(`${base}/media`, { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: PNG });
     assert.strictEqual(denied.status, 401);
-    const bad = await fetch(`${base}/media`, { method: 'POST', headers: { 'Content-Type': 'application/zip', Authorization: `Bearer ${ownerToken}` }, body: PNG });
+    const bad = await fetch(`${base}/media`, { method: 'POST', headers: { 'Content-Type': 'application/x-msdownload', Authorization: `Bearer ${ownerToken}` }, body: PNG });
     assert.strictEqual(bad.status, 415);
     const ok = await fetch(`${base}/media`, { method: 'POST', headers: { 'Content-Type': 'image/png', Authorization: `Bearer ${ownerToken}`, 'X-Name': 'shot.png' }, body: PNG });
     assert.strictEqual(ok.status, 200);

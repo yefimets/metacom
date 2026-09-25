@@ -17,6 +17,9 @@ const TYPES = {
   'application/pdf': 'pdf',
   'text/plain': 'txt',
   'text/markdown': 'md',
+  'text/csv': 'csv',
+  'application/json': 'json',
+  'application/zip': 'zip',
 };
 const EXTS = Object.fromEntries(Object.entries(TYPES).map(([type, ext]) => [ext, type]));
 const FILE = /^\/media\/([0-9a-f]{32})\.([a-z0-9]{1,5})$/;
@@ -30,7 +33,8 @@ const SECURITY = {
 
 const safeName = (value) => String(value || '').replace(/[^\w.() -]/g, '_').slice(0, 120) || 'file';
 
-/// Files attached to messages: images pasted into the phone or terminal chat, mostly.
+/// Files attached to messages: images pasted into the phone or terminal chat, and reports
+/// agents send back.
 /// Stored under <data>/media/<id>.<ext> with a random id; the id is the only thing that
 /// grants a read, so an agent on another machine can fetch it with a plain GET.
 class Media {

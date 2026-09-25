@@ -5,7 +5,7 @@ const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio
 const { z } = require('zod');
 const { connect } = require('./client.js');
 const { line, member } = require('./format.js');
-const { download } = require('./media.js');
+const { download, upload } = require('./media.js');
 
 const text = (value) => ({ content: [{ type: 'text', text: value }] });
 
@@ -38,6 +38,14 @@ const serveMcp = async (config) => {
     return line({ ...msg, media: msg.media.map((m, i) => ({ ...m, url: files[i] })) });
   };
 
+  // local paths the agent wants to hand over: uploaded with the agent's token, attached by url
+  const files = z.array(z.string()).max(8).optional().describe('Absolute paths of local files to attach (md, txt, pdf, csv, json, log, patch, zip, images; up to 20 MB each). The recipient gets them as downloadable files.');
+  const attach = async (paths) => {
+    if (!paths || !paths.length) return undefined;
+    return Promise.all(paths.map((file) => upload({ http: config.http, token, file })));
+  };
+  const attached = (media) => (media && media.length ? ` with ${media.map((m) => m.name).join(', ')}` : '');
+
   const waiters = new Set();
   const onMessage = (msg) => {
     if (msg.from.name === name) return;
@@ -64,22 +72,24 @@ const serveMcp = async (config) => {
 
   server.tool(
     'hub_say',
-    'Post a short message to the room. Everyone in the room and the owner see it. Use it to report an outcome or a decision that affects others.',
-    { text: z.string().min(1).max(16000) },
-    async ({ text: body }) => {
-      const msg = await hub.api.room.say({ room, text: body });
-      return text(`posted ${msg.id}`);
+    'Post a short message to the room. Everyone in the room and the owner see it. Use it to report an outcome or a decision that affects others. Attach `files` to hand over a report, a log or a screenshot instead of pasting it.',
+    { text: z.string().min(1).max(16000), files },
+    async ({ text: body, files: paths }) => {
+      const media = await attach(paths);
+      const msg = await hub.api.room.say({ room, text: body, media });
+      return text(`posted ${msg.id}${attached(media)}`);
     },
   );
 
   server.tool(
     'hub_send',
-    'Send a directed message to another agent by name. kind "command" (default) is typed into its terminal as an instruction when it is idle, if that agent accepts commands from you (see hub_agents), otherwise it arrives as a note; kind "info" is a note or a reply. Use hub_wait_agent afterwards to know when it finished, and hub_read or hub_wait for its reply.',
-    { to: z.string(), text: z.string().min(1).max(16000), kind: z.enum(['info', 'command']).optional() },
-    async ({ to, text: body, kind }) => {
-      const result = await hub.api.agents.send({ to, text: body, kind: kind || 'command' });
+    'Send a directed message to another agent by name. kind "command" (default) is typed into its terminal as an instruction when it is idle, if that agent accepts commands from you (see hub_agents), otherwise it arrives as a note; kind "info" is a note or a reply. Works for humans too (the owner): send them a file with `files`. Use hub_wait_agent afterwards to know when it finished, and hub_read or hub_wait for its reply.',
+    { to: z.string(), text: z.string().min(1).max(16000), kind: z.enum(['info', 'command']).optional(), files },
+    async ({ to, text: body, kind, files: paths }) => {
+      const media = await attach(paths);
+      const result = await hub.api.agents.send({ to, text: body, kind: kind || 'command', media });
       const how = result.kind === 'command' ? 'as a command' : result.downgraded ? `as a note (${result.to} does not take commands from you)` : 'as a note';
-      return text(result.delivered ? `delivered to ${result.to} ${how}` : `${result.to} is offline, queued ${how}`);
+      return text((result.delivered ? `delivered to ${result.to} ${how}` : `${result.to} is offline, queued ${how}`) + attached(media));
     },
   );
 
