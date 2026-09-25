@@ -437,7 +437,7 @@ class Hub {
     // every room with a log or a member, so one a human just opened is listed before anyone speaks
     const summary = new Map(['default', ...this.store.rooms()].map((room) => [room, empty(room)]));
     for (const m of this.members.values()) {
-      if (!m.room) continue;
+      if (!m.room || !ROOM.test(m.room)) continue; // "*" and names from before they were checked
       const s = summary.get(m.room) || empty(m.room);
       summary.set(m.room, s);
       if (m.kind !== 'agent') continue;

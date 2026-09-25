@@ -678,9 +678,10 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         </Box>
       </Box>
       <Box ref={liveRef} flexDirection="column" flexShrink={0}>
-        <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />
+        {/* the member line belongs to the room you are in; the room list stands on its own */}
+        {!picker && <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />}
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
-        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={picker ? "filter, or name a new room · ↑↓ choose · enter opens · esc back" : `message ${state.room} · @ for agents · / for commands · ← rooms`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
+        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={picker ? "filter or new room · ↑↓ enter · esc back" : `message ${state.room} · @ for agents · / for commands · ← rooms`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
         <Footer text={editor.text} busy={state.busy} status={state.status} members={members} room={state.room} attachments={pending.length} frame={frame} />
       </Box>
     </Box>

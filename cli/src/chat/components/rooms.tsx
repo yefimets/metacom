@@ -11,7 +11,8 @@ export type PickerItem = { room: string; summary?: RoomSummary; create?: boolean
 /// name is new and a valid room name, a last row that creates it.
 export const pickerItems = (rooms: RoomSummary[], filter: string, current: string): PickerItem[] => {
   const q = filter.trim();
-  const shown: PickerItem[] = rooms.filter((r) => r.room.toLowerCase().includes(q.toLowerCase())).map((r) => ({ room: r.room, summary: r }));
+  // only names that can be opened: an old member can still sit in "*", which is no room
+  const shown: PickerItem[] = rooms.filter((r) => ROOM.test(r.room) && r.room.toLowerCase().includes(q.toLowerCase())).map((r) => ({ room: r.room, summary: r }));
   // the room you are in is listed even before the hub has heard it spoken in
   if (!rooms.some((r) => r.room === current) && current.toLowerCase().includes(q.toLowerCase())) shown.unshift({ room: current });
   if (q && ROOM.test(q) && !shown.some((r) => r.room === q)) return [...shown, { room: q, create: true }];
