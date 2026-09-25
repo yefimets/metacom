@@ -75,6 +75,11 @@ const main = async () => {
     const prefs = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'metacom-hub', 'voice.json'), 'utf8'));
     if (prefs.output !== 'Test Box') throw new Error(`output not saved: ${JSON.stringify(prefs)}`);
     show(b, 'bob: /output');
+    await b.type('/volume 200%');
+    await b.type(b.key.enter, 500);
+    await b.wait(/volume 200%/);
+    const vol = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'metacom-hub', 'voice.json'), 'utf8')).volume;
+    if (vol.master !== 2) throw new Error(`volume not saved: ${JSON.stringify(vol)}`);
     await b.type('/voice off');
     await b.type(b.key.enter, 300);
     await a.wait(/bob left the call/);

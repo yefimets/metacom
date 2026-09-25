@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
-const { Audio, Shaper, tools, rms, mix, resample, FRAME_BYTES } = require('../lib/voice.js');
+const { Audio, Shaper, tools, rms, mix, parseVolume, resample, FRAME_BYTES } = require('../lib/voice.js');
 
 const fakeSpawner = () => {
   const spawned = [];
@@ -360,8 +360,43 @@ test('voice: switching the output mid-call starts the player again on the new de
 
 test('voice: the device choice is kept in its own file', () => {
   const file = require('node:path').join(require('node:os').tmpdir(), `voice-${process.pid}.json`);
-  assert.deepStrictEqual(loadPrefs(file), { input: null, output: null });
+  const plain = { master: 1, people: {} };
+  assert.deepStrictEqual(loadPrefs(file), { input: null, output: null, volume: plain });
   savePrefs({ input: 'AirPods Pro', output: null }, file);
-  assert.deepStrictEqual(loadPrefs(file), { input: 'AirPods Pro', output: null });
+  assert.deepStrictEqual(loadPrefs(file), { input: 'AirPods Pro', output: null, volume: plain });
+  savePrefs({ ...loadPrefs(file), volume: { master: 1.5, people: { roma2: 2 } } }, file);
+  assert.deepStrictEqual(loadPrefs(file).volume, { master: 1.5, people: { roma2: 2 } });
+  assert.strictEqual(loadPrefs(file).input, 'AirPods Pro', 'the devices stay');
   require('node:fs').unlinkSync(file);
+});
+
+test('voice: /volume understands 150%, 1.5, 150, + and -, mute and reset', () => {
+  assert.strictEqual(parseVolume('150%'), 1.5);
+  assert.strictEqual(parseVolume('1.5'), 1.5);
+  assert.strictEqual(parseVolume('150'), 1.5);
+  assert.strictEqual(parseVolume('+', 1), 1.25);
+  assert.strictEqual(parseVolume('-', 0.1), 0);
+  assert.strictEqual(parseVolume('1000%'), 4, 'at most 400%');
+  assert.strictEqual(parseVolume('mute'), 0);
+  assert.strictEqual(parseVolume('reset', 3), 1);
+  assert.strictEqual(parseVolume('loud'), null);
+});
+
+test('voice: the volume is applied in the mix, per person and overall, with peaks rounded', () => {
+  assert.strictEqual(mix([tone(1000, 4)], 4, [2]).readInt16LE(2), 2000, 'twice as loud');
+  const loud = mix([tone(20000, 4)], 4, [3]).readInt16LE(2);
+  assert.ok(loud > 28000 && loud < 32767, `a boosted peak is rounded under full scale: ${loud}`);
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', ['-']], hint: '' }, spawner, volume: { master: 1, people: { bob: 2 } } });
+  const t = Date.now();
+  audio.play('bob', tone(1000).toString('base64'));
+  audio.play('bob', tone(1000).toString('base64'));
+  clearInterval(audio.timer);
+  audio.tick(t + 200);
+  assert.strictEqual(Math.abs(Buffer.concat(spawned[0].written).readInt16LE(2)), 2000);
+  audio.setVolume(null, 0.5);
+  audio.tick(t + 260);
+  const all = Buffer.concat(spawned[0].written);
+  assert.strictEqual(Math.abs(all.readInt16LE(all.length - 2)), 1000, 'bob at 200% of a 50% call');
+  audio.close();
 });

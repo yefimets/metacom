@@ -192,15 +192,17 @@ const prefsFile = () => require('node:path').join(require('node:os').homedir(), 
 const loadPrefs = (file = prefsFile()) => {
   try {
     const p = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
-    return { input: p.input || null, output: p.output || null };
+    const volume = { master: 1, people: {}, ...(p.volume || {}) };
+    return { input: p.input || null, output: p.output || null, volume };
   } catch {
-    return { input: null, output: null };
+    return { input: null, output: null, volume: { master: 1, people: {} } };
   }
 };
 const savePrefs = (prefs, file = prefsFile()) => {
   const fs = require('node:fs');
   fs.mkdirSync(require('node:path').dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify({ input: prefs.input || null, output: prefs.output || null }, null, 2) + '\n', { mode: 0o600 });
+  const volume = prefs.volume || { master: 1, people: {} };
+  fs.writeFileSync(file, JSON.stringify({ input: prefs.input || null, output: prefs.output || null, volume }, null, 2) + '\n', { mode: 0o600 });
 };
 
 const has = (cmd) => spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }).status === 0;
@@ -226,15 +228,38 @@ const rms = (buf) => {
   return Math.sqrt(sum / n);
 };
 
-/// Sum of the speakers' next chunks, clipped to int16.
-const mix = (chunks, bytes) => {
+/// Sum of the speakers' next chunks, each at its own gain, clipped to int16. With any gain above
+/// 1 a soft knee rounds the peaks (above ~-6 dBFS) instead of clipping them flat.
+const mix = (chunks, bytes, gains = []) => {
   const out = Buffer.alloc(bytes);
+  const boosted = gains.some((g) => g > 1);
   for (let i = 0; i < bytes; i += 2) {
     let s = 0;
-    for (const c of chunks) if (i + 1 < c.length) s += c.readInt16LE(i);
-    out.writeInt16LE(Math.max(-32768, Math.min(32767, s)), i);
+    chunks.forEach((c, k) => {
+      if (i + 1 < c.length) s += c.readInt16LE(i) * (gains[k] ?? 1);
+    });
+    if (boosted) {
+      const x = s / 32768;
+      const a = Math.abs(x);
+      s = (a < 0.5 ? x : Math.sign(x) * (0.5 + 0.5 * Math.tanh((a - 0.5) / 0.5))) * 32767;
+    }
+    out.writeInt16LE(Math.round(Math.max(-32768, Math.min(32767, s))), i);
   }
   return out;
+};
+
+/// Playback volume as the user says it: "150%", "1.5", "+", "-" (steps of 25%), "mute"; 0..4.
+const MAX_VOLUME = 4;
+const parseVolume = (arg, current = 1) => {
+  const a = String(arg || '').trim().toLowerCase();
+  if (a === '+' || a === 'up') return Math.min(MAX_VOLUME, current + 0.25);
+  if (a === '-' || a === 'down') return Math.max(0, current - 0.25);
+  if (a === 'mute' || a === 'off') return 0;
+  if (a === 'reset' || a === 'normal') return 1;
+  const m = a.match(/^(\d+(?:\.\d+)?)\s*(%?)$/);
+  if (!m) return null;
+  const v = m[2] ? Number(m[1]) / 100 : Number(m[1]) > MAX_VOLUME ? Number(m[1]) / 100 : Number(m[1]);
+  return Math.max(0, Math.min(MAX_VOLUME, v));
 };
 
 /// Decides which mic frames go out and how loud. The gate follows the room: it opens a margin
@@ -292,8 +317,9 @@ class Shaper {
 /// (frames from the hub -> per-speaker queues -> one mixed stream -> player).
 /// Events: 'speaking' (bool, this mic), 'error' (message; the call goes on without that half).
 class Audio extends EventEmitter {
-  constructor({ send, tools: picked = tools(), spawner = spawn, shape = {}, devices = {} } = {}) {
+  constructor({ send, tools: picked = tools(), spawner = spawn, shape = {}, devices = {}, volume = {} } = {}) {
     super();
+    this.volume = { master: volume.master ?? 1, people: { ...(volume.people || {}) } };
     this.devices = { input: devices.input || null, output: devices.output || null };
     this.send = send;
     this.tools = picked;
@@ -427,6 +453,12 @@ class Audio extends EventEmitter {
     ].join('\n');
   }
 
+  /// Playback volume, for everyone (`who` null) or one speaker; applies from the next tick.
+  setVolume(who, v) {
+    if (who) this.volume.people[who] = v;
+    else this.volume.master = v;
+  }
+
   /// Switch the mic or the speaker to another device (null: the system's), live: the tool
   /// starts again on it, and anything that failed on the old one is tried afresh.
   setDevice(kind, name) {
@@ -542,7 +574,7 @@ class Audio extends EventEmitter {
         this.queues.delete(name);
       }
     }
-    const out = mix(chunks, due);
+    const out = mix(chunks, due, live.map(([name]) => this.volume.master * (this.volume.people[name] ?? 1)));
     this.clock.written += due;
     this.write(out);
     return out;
@@ -599,4 +631,4 @@ class Audio extends EventEmitter {
   }
 }
 
-module.exports = { Audio, Shaper, tools, rms, mix, resample, listDevices, resolveDevice, withDevice, loadPrefs, savePrefs, RATE, FRAME_BYTES, FRAME_MS };
+module.exports = { Audio, Shaper, tools, rms, mix, parseVolume, resample, listDevices, resolveDevice, withDevice, loadPrefs, savePrefs, RATE, FRAME_BYTES, FRAME_MS };

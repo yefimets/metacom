@@ -22,11 +22,14 @@ type AudioLike = {
   close: () => void;
   setDevice: (kind: "input" | "output", name: string | null) => void;
   report: () => string;
+  setVolume: (who: string | null, v: number) => void;
 };
 type Device = { name: string; label: string; default: boolean };
-type Devices = { input: string | null; output: string | null };
+type Volume = { master: number; people: Record<string, number> };
+type Devices = { input: string | null; output: string | null; volume?: Volume };
 const voice = require("../../lib/voice.js") as {
-  Audio: new (o: { send: (data: string) => void; devices?: Devices }) => AudioLike;
+  Audio: new (o: { send: (data: string) => void; devices?: Devices; volume?: Volume }) => AudioLike;
+  parseVolume: (arg: string, current: number) => number | null;
   listDevices: () => { inputs?: Device[]; outputs?: Device[]; error?: string };
   resolveDevice: (arg: string, list: Device[] | null) => { name?: string | null; error?: string };
   loadPrefs: () => Devices;
@@ -115,6 +118,7 @@ export const COMMANDS = [
   { name: "devices", args: "", help: "the mics and speakers here, numbered for /input and /output" },
   { name: "input", args: "[n|name|default]", help: "which mic the call uses; remembered, switches live" },
   { name: "output", args: "[n|name|default]", help: "which speaker or headphones the call plays on; remembered, switches live" },
+  { name: "volume", args: "[150%|+|-|<name> 200%]", help: "how loud the call plays, for everyone or one person (up to 400%)" },
   { name: "mute", args: "", help: "turn your mic off or on again, staying in the call (or click the bars by your name)" },
   { name: "rooms", args: "", help: "all rooms with counts (or ← on an empty line)" },
   { name: "room", args: "<name>", help: "open another room, creating it if it is new" },
@@ -372,6 +376,7 @@ export class Store {
         api.voice!.frame({ data }).catch(() => {});
       },
       devices: voice.loadPrefs(),
+      volume: voice.loadPrefs().volume,
     });
     audio.on("speaking", (on: boolean) => {
       if (this.state.call) this.set({ call: { ...this.state.call, speaking: on } });
@@ -734,6 +739,28 @@ export class Store {
           "/input 2 · /output 3 · /output airpods · /input default",
         ].join("\n");
         this.push({ type: "screen", name: "audio", title: "audio devices", text });
+        break;
+      }
+      case "volume":
+      case "vol": {
+        const prefs = voice.loadPrefs();
+        const vol: Volume = prefs.volume ?? { master: 1, people: {} };
+        const pct = (v: number) => `${Math.round(v * 100)}%`;
+        if (!arg) {
+          const people = Object.entries(vol.people).filter(([, v]) => v !== 1);
+          return this.setStatus(`volume ${pct(vol.master)}${people.map(([n, v]) => ` · ${n} ${pct(v)}`).join("")} · /volume 150% · /volume <name> 200%`, "plain", 5000);
+        }
+        // `/volume 150%`, `/volume +`, or `/volume roma2 200%`
+        const [first, second] = rest;
+        const who = second !== undefined ? first!.replace(/^@/, "") : null;
+        const current = who ? (vol.people[who] ?? 1) : vol.master;
+        const v = voice.parseVolume(second ?? first ?? "", current);
+        if (v === null) return this.note("usage: /volume 150% · /volume + · /volume - · /volume <name> 200% · /volume reset", "warn");
+        if (who) vol.people[who] = v;
+        else vol.master = v;
+        voice.savePrefs({ ...prefs, volume: vol });
+        this.audio?.setVolume(who, v);
+        this.setStatus(`${who ? who + "'s " : ""}volume ${pct(v)}${v > 1 ? " · peaks are rounded, not clipped" : ""}`, "ok", 3000);
         break;
       }
       case "input":
