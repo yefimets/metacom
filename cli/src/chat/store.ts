@@ -498,9 +498,8 @@ export class Store {
         const all = this.state.log.flatMap((e) => (e.type === "message" && e.msg.media ? e.msg.media : [])).reverse();
         const m = all[n - 1];
         if (!m) return this.note(all.length ? `only ${all.length} file${all.length === 1 ? "" : "s"} in view` : "no files in the room yet", "warn");
-        const file = await media.saveAs({ http: this.config.http, media: m, dir: cmd === "save" ? rest.join(" ") || undefined : undefined });
-        if (cmd === "open" && !media.openFile(file)) return this.note(`saved ${file}, but could not open it here`, "warn");
-        this.note(`${cmd === "open" ? "opened" : "saved"} ${file}`, "ok");
+        if (cmd === "open") return this.openMedia(m);
+        this.note(`saved ${await media.saveAs({ http: this.config.http, media: m, dir: rest.join(" ") || undefined })}`, "ok");
         break;
       }
       case "rooms":
@@ -533,6 +532,18 @@ export class Store {
     }
   }
 
+
+  /// An attached file, saved to ~/Downloads and opened with the desktop's default app. Used by
+  /// /open and by clicking the file's button under a message.
+  async openMedia(m: Media): Promise<void> {
+    try {
+      const file = await media.saveAs({ http: this.config.http, media: m });
+      if (media.openFile(file)) this.note(`opened ${file}`, "ok");
+      else this.note(`saved ${file}, but could not open it here`, "warn");
+    } catch (err) {
+      this.note(`${m.name}: ${(err as Error).message}`, "warn");
+    }
+  }
 
   quit(): void {
     try {

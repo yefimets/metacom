@@ -17,7 +17,7 @@ import { Note, Rule } from "@/chat/components/note";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
 import { Editor } from "@/chat/editor";
-import { COMMANDS, type Entry, type Member, type Message, type Store } from "@/chat/store";
+import { COMMANDS, type Entry, type Media, type Member, type Message, type Store } from "@/chat/store";
 import { themeByName, themeNames } from "@/chat/themes";
 
 /// Rank a candidate against what the user typed: prefix, then substring, then subsequence.
@@ -317,7 +317,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
 
   /// The message whose action row was clicked, and which action. The entry's last child is
   /// that row, so the laid-out tree answers both without measuring text.
-  const feedAction = useCallback((row: number, col: number): { msg: Message; action: Action } | undefined => {
+  const feedAction = useCallback((row: number, col: number): { msg: Message; action: Action; file?: Media } | undefined => {
     const { log } = clickState.current;
     const content = contentRef.current;
     if (!content) return;
@@ -331,8 +331,8 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (!actions?.yogaNode) continue;
       const at = screenAt(actions);
       if (at.top !== row - 1) continue;
-      const action = actionAt(col - 1 - at.left);
-      if (action) return { msg: entry.msg, action };
+      const hit = actionAt(col - 1 - at.left, entry.msg.media);
+      if (hit) return { msg: entry.msg, ...hit };
     }
     return;
   }, []);
@@ -391,6 +391,11 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       const act = feedAction(row, col);
       if (act) {
         const { msg, action } = act;
+        // a file button: save it to ~/Downloads and hand it to the desktop
+        if (action === "file" && act.file) {
+          void store.openMedia(act.file);
+          return refresh();
+        }
         if (action === "reply") {
           // the same thing as clicking a name: address them and let you write
           const author = msg.from?.name;

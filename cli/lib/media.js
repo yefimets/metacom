@@ -96,7 +96,8 @@ const download = async ({ http, url }) => {
 };
 
 /// An attachment saved under its own name in `dir` (~/Downloads by default), without
-/// overwriting: `report.md`, then `report (1).md`. Returns the path.
+/// overwriting: `report.md`, then `report (1).md`. The same file saved again (opened twice)
+/// is found and reused instead of copied. Returns the path.
 const saveAs = async ({ http, media, dir }) => {
   const cached = await download({ http, url: media.url });
   const into = resolvePath(dir || path.join(os.homedir(), 'Downloads'));
@@ -104,8 +105,13 @@ const saveAs = async ({ http, media, dir }) => {
   const name = path.basename(String(media.name || path.basename(cached))) || path.basename(cached);
   const ext = path.extname(name);
   const stem = name.slice(0, name.length - ext.length);
+  const data = fs.readFileSync(cached);
+  const same = (f) => fs.statSync(f).size === data.length && fs.readFileSync(f).equals(data);
   let file = path.join(into, name);
-  for (let i = 1; fs.existsSync(file); i++) file = path.join(into, `${stem} (${i})${ext}`);
+  for (let i = 1; fs.existsSync(file); i++) {
+    if (same(file)) return file;
+    file = path.join(into, `${stem} (${i})${ext}`);
+  }
   fs.copyFileSync(cached, file);
   return file;
 };

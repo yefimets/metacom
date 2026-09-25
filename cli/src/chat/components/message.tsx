@@ -7,24 +7,41 @@ import { type Selection, sliceOf } from "@/chat/selection";
 import { type Line, type Span, renderBody } from "@/chat/markdown";
 import { Name } from "@/chat/components/text";
 import { nameColor } from "@/chat/palette";
-import type { Member, Message } from "@/chat/store";
+import type { Media, Member, Message } from "@/chat/store";
 
-/// The row of actions under a message. Each one is a glyph and a word, and the gaps are
-/// fixed, so a click can be turned back into an action without measuring the screen.
+/// The row of actions under a message: reply, forward, then one button per attached file.
+/// Each is a glyph and a word, and the gaps are fixed, so a click can be turned back into an
+/// action without measuring the screen.
 export const ACTIONS = [
   { name: "reply", text: "↩ reply" },
   { name: "forward", text: "↪ forward" },
 ] as const;
-export type Action = (typeof ACTIONS)[number]["name"];
+export type Action = (typeof ACTIONS)[number]["name"] | "file";
 const GAP = 2;
-export const actionsText = ACTIONS.map((a) => a.text).join(" ".repeat(GAP));
+const MAX_FILE_LABEL = 32;
 
-/// Which action a click at column `c` (0-based, relative to the row's left edge) landed on.
-export const actionAt = (c: number): Action | undefined => {
+const fileLabel = (m: Media): string => {
+  const g = splitGraphemes(m.name);
+  return "↗ " + (g.length > MAX_FILE_LABEL ? g.slice(0, MAX_FILE_LABEL - 1).join("") + "…" : m.name);
+};
+
+const buttons = (media: Media[] = []): { action: Action; text: string; file?: Media }[] => [
+  ...ACTIONS.map((a) => ({ action: a.name as Action, text: a.text })),
+  ...media.map((m) => ({ action: "file" as const, text: fileLabel(m), file: m })),
+];
+
+export const actionsText = (media?: Media[]): string =>
+  buttons(media)
+    .map((b) => b.text)
+    .join(" ".repeat(GAP));
+
+/// Which action a click at column `c` (0-based, relative to the row's left edge) landed on,
+/// and for a file button, which file.
+export const actionAt = (c: number, media?: Media[]): { action: Action; file?: Media } | undefined => {
   let col = 0;
-  for (const { name, text } of ACTIONS) {
-    const w = terminalWidth(text);
-    if (c >= col && c < col + w) return name;
+  for (const b of buttons(media)) {
+    const w = terminalWidth(b.text);
+    if (c >= col && c < col + w) return { action: b.action, file: b.file };
     col += w + GAP;
   }
   return undefined;
@@ -104,7 +121,6 @@ export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, left =
   // a forwarded message says so beside the time, not in the middle of what was written
   const forwarded = FORWARDED.exec(msg.text);
   const body = bodyOf(msg.text);
-  const files = msg.media?.filter((m) => !msg.text.includes(`[${m.name}]`)) ?? [];
   return (
     <Box flexDirection="column">
       {!grouped && (
@@ -138,14 +154,11 @@ export const MessageLine = ({ msg, grouped, members, width = 80, top = 0, left =
             <BodyLine key={i} line={line} row={top + i} left={left} selection={selection} />
           )
         )}
-        {files.length > 0 && (
-          <Text color={muted} wrap="wrap">
-            {files.map((m) => `[${m.name}]`).join(" ")}
-          </Text>
-        )}
       </Box>
       <Box>
-        <Text color={theme.colors.mutedForeground}>{actionsText}</Text>
+        <Text color={theme.colors.mutedForeground} wrap="truncate-end">
+          {actionsText(msg.media)}
+        </Text>
       </Box>
     </Box>
   );
