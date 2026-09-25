@@ -80,17 +80,19 @@ const main = async () => {
   await a.type(a.key.esc, 300);
   await a.type(a.key.esc, 300);
 
-  // the room list: ← on an empty line, type a new name, enter creates and opens it, and back
+  // the room list: ← on an empty line, type a new name, enter creates and opens it, and back.
+  // A fresh name each run: a room someone once posted in exists for good.
+  const fresh = `tuipick${Date.now().toString(36)}`;
   await b.type(b.key.left);
   await b.wait(/rooms[\s\S]*tuitest[\s\S]*you are here/);
-  await b.type('tuipick');
-  await b.wait(/\+ create tuipick/);
+  await b.type(fresh);
+  await b.wait(new RegExp(`\\+ create ${fresh}`));
   show(b, 'bob: room list, new name typed');
   await b.type(b.key.enter);
-  await b.wait(/message tuipick ·/);
+  await b.wait(new RegExp(`message ${fresh} ·`));
   show(b, 'bob: in the new room');
   await b.type(b.key.left);
-  await b.wait(/tuipick[\s\S]*you are here/);
+  await b.wait(new RegExp(`${fresh}[\\s\\S]*you are here`));
   await b.type('tuitest');
   await b.type(b.key.right);
   await b.wait(/message tuitest ·/);
