@@ -14,7 +14,7 @@ import { MessageLine, actionAt, bodyOf, type Action } from "@/chat/components/me
 import { type Selection, isEmpty, textOf } from "@/chat/selection";
 import { bodyTextLines } from "@/chat/markdown";
 import { Note, Rule } from "@/chat/components/note";
-import { RoomPicker, pickerItems, type PickerItem } from "@/chat/components/rooms";
+import { MemberPicker, RoomPicker, memberItems, pickerItems, type PickerItem } from "@/chat/components/rooms";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
 import { StatusBar, segments } from "@/chat/components/status-bar";
 import { Editor } from "@/chat/editor";
@@ -135,8 +135,11 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
   const redraw = useCallback(() => bump((n) => n + 1), []);
   const [popup, setPopup] = useState<PopupState>(EMPTY_POPUP);
   // The room list, in place of the conversation: ← on an empty line opens it, the input
-  // filters it or names a new room, ↑↓ choose, enter or → open, esc or ← go back.
-  const [picker, setPicker] = useState<{ rooms: RoomSummary[]; index: number } | null>(null);
+  // filters it or names a new room, ↑↓ choose, enter or → open, esc or ← go back. While a
+  // message is held for forwarding, choosing a room goes on to its members (`room` and
+  // `members` set): who there gets it, or everyone.
+  type Picker = { rooms: RoomSummary[]; index: number; forward?: boolean; room?: string; members?: Member[] | null };
+  const [picker, setPicker] = useState<Picker | null>(null);
   const pickerRef = useRef(picker);
   pickerRef.current = picker;
   const lastEsc = useRef(0);
@@ -414,7 +417,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         setForward(msg);
         editor.set("@");
         editor.end();
-        store.setStatus(`forwarding ${msg.from?.name ?? "?"}'s message · pick who and press enter · esc cancels`, "ok");
+        store.setStatus(`forwarding ${msg.from?.name ?? "?"}'s message · pick who, or clear the @ and ← for another room · esc cancels`, "ok");
         return refresh();
       }
       const name = feedName(row, col);
@@ -532,14 +535,24 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     }
     if (pickerRef.current) {
       const p = pickerRef.current;
-      const items = pickerItems(p.rooms, editor.text, store.state.room);
+      const items = p.room ? memberItems(p.room, p.members ?? [], editor.text) : pickerItems(p.rooms, editor.text, store.state.room, !p.forward);
       const closePicker = () => {
         setPicker(null);
-        editor.clear();
+        // still forwarding: back to picking someone in this room
+        editor.set(forwardRef.current ? "@" : "");
         setPopup(EMPTY_POPUP);
-        redraw();
+        refresh();
       };
-      if (key.escape || (key.leftArrow && !editor.text)) return closePicker();
+      if (key.escape) return closePicker();
+      if (key.leftArrow && !editor.text) {
+        // from a room's members back to the rooms, with that room chosen
+        if (p.room) {
+          const back = pickerItems(p.rooms, "", store.state.room, false).findIndex((i) => i.room === p.room);
+          setPicker({ rooms: p.rooms, index: Math.max(0, back), forward: true });
+          return;
+        }
+        return closePicker();
+      }
       if (key.upArrow || key.downArrow) {
         if (!items.length) return;
         setPicker({ ...p, index: (Math.min(p.index, items.length - 1) + (key.upArrow ? -1 : 1) + items.length) % items.length });
@@ -548,6 +561,22 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       if (key.return || (key.rightArrow && editor.cursor >= editor.text.length)) {
         const item: PickerItem | undefined = items[Math.min(p.index, items.length - 1)];
         if (!item) return;
+        const held = forwardRef.current;
+        if (held && p.room) {
+          // the recipient is picked: a member, or the room itself
+          setForward(null);
+          forwardRef.current = null;
+          store.setStatus(null);
+          if (item.member) void store.forward(held, item.member.name, "", item.member);
+          else void store.forwardToRoom(held, item.room);
+          return closePicker();
+        }
+        if (held) {
+          editor.clear();
+          setPicker({ ...p, room: item.room, members: null, index: 0 });
+          void store.membersOf(item.room).then((members) => setPicker((cur) => (cur && cur.room === item.room ? { ...cur, members } : cur)));
+          return;
+        }
         closePicker();
         void store.switchRoom(item.room).then(toBottom);
         return;
@@ -555,9 +584,9 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
       // anything else edits the name; the choice goes back to the top of what matches
       if (input && !key.ctrl && !key.meta) setPicker({ ...p, index: 0 });
       if (key.backspace || key.delete) setPicker({ ...p, index: 0 });
-    } else if (key.leftArrow && !editor.text && popup.kind === null && !forwardRef.current) {
-      setPicker({ rooms: [], index: 0 });
-      void store.rooms().then((rooms) => setPicker((cur) => (cur ? { rooms, index: Math.max(0, pickerItems(rooms, "", store.state.room).findIndex((i) => i.room === store.state.room)) } : cur)));
+    } else if (key.leftArrow && !editor.text && popup.kind === null) {
+      setPicker({ rooms: [], index: 0, forward: Boolean(forwardRef.current) });
+      void store.rooms().then((rooms) => setPicker((cur) => (cur ? { ...cur, rooms, index: Math.max(0, pickerItems(rooms, "", store.state.room).findIndex((i) => i.room === store.state.room)) } : cur)));
       return;
     }
     if (key.escape) {
@@ -666,7 +695,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
             entries that arrived next to zero rows, and a margin that followed the offset fed
             back into the height it was computed from. The room list takes its place while open. */}
         <Box ref={contentRef} position="absolute" left={0} right={0} bottom={picker ? 0 : offset - maxOffset} flexDirection="column" flexShrink={0}>
-          {picker && <RoomPicker rooms={picker.rooms} filter={editor.text} index={picker.index} current={state.room} height={viewH} />}
+          {picker && (picker.room ? <MemberPicker room={picker.room} members={picker.members ?? null} filter={editor.text} index={picker.index} height={viewH} /> : <RoomPicker rooms={picker.rooms} filter={editor.text} index={picker.index} current={state.room} height={viewH} />)}
           {/* one box per entry, so a click can be traced back to its entry */}
           {!picker && state.log.map((entry, i) => (
             // a message ends with a line of air, so the action row does not touch what follows;
@@ -681,7 +710,7 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         {/* the member line belongs to the room you are in; the room list stands on its own */}
         {!picker && <StatusBar room={state.room} members={members} me={state.me.name} url={state.url} frame={frame} mouse={state.mouse} />}
         {popup.kind && <Popup popup={popup} room={footerRoom} />}
-        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={picker ? "filter or new room · ↑↓ enter · esc back" : `message ${state.room} · @ for agents · / for commands · ← rooms`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
+        <Composer text={editor.text} cursor={editor.cursor} width={width} placeholder={picker ? (picker.room ? "filter · ↑↓ enter sends · ← rooms" : picker.forward ? "filter · ↑↓ enter · esc back" : "filter or new room · ↑↓ enter · esc back") : `message ${state.room} · @ for agents · / for commands · ← rooms`} tokens={pending.map((a) => a.token)} origin={live.hasMeasured ? { left: live.left, top: live.top } : undefined} />
         <Footer text={editor.text} busy={state.busy} status={state.status} members={members} room={state.room} attachments={pending.length} frame={frame} />
       </Box>
     </Box>

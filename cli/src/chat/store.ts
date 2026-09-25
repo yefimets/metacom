@@ -427,11 +427,17 @@ export class Store {
 
 
   /// Pass a message on to someone else, under your own name, saying where it came from.
-  async forward(msg: Message, to: string, note: string): Promise<void> {
+  private forwarded(msg: Message, note: string): string {
     const from = msg.from?.name ?? "?";
-    const body = `[forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
+    return `[forwarded from ${from}${msg.to ? ` → ${msg.to}` : ""}] ${msg.text}${note ? `\n${note}` : ""}`;
+  }
+
+  /// Send a held message on to a member: one of this room's by name, or `member` when it was
+  /// picked from another room's list.
+  async forward(msg: Message, to: string, note: string, picked?: Member): Promise<void> {
+    const body = this.forwarded(msg, note);
     try {
-      const member = this.state.members.get(to);
+      const member = picked ?? this.state.members.get(to);
       if (!member) return this.setStatus(`nobody called ${to} is here`, "warn", 2500);
       const kind = member.kind === "agent" ? "command" : "info";
       const r = await this.hub!.api.agents.send({ to, text: body, kind, media: msg.media });
@@ -439,6 +445,23 @@ export class Store {
     } catch (error) {
       this.failure(error);
     }
+  }
+
+  /// Post a held message into another room, for everyone there.
+  async forwardToRoom(msg: Message, room: string): Promise<void> {
+    try {
+      await this.hub!.api.room.say({ room, text: this.forwarded(msg, ""), media: msg.media });
+      this.setStatus(`forwarded to ${room}`, "ok", 2500);
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
+  /// The members of any room, for forwarding into it.
+  async membersOf(room: string): Promise<Member[]> {
+    if (!this.hub) return [];
+    const list: Member[] = await this.hub.api.agents.list({ room });
+    return list.filter((m) => m.name !== this.state.me.name);
   }
 
   /// The member a message is for: the first @name in it, wherever it stands. A leading
