@@ -147,6 +147,25 @@ test('voice: a player that never works says why once, then stays off', () => {
   audio.close();
 });
 
+test('voice: after a voice the player gets a second of silence, so sox lets the last words out', () => {
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', ['-']], hint: '' }, spawner });
+  const t0 = Date.now();
+  audio.play('bob', tone(3000).toString('base64'));
+  audio.play('bob', tone(3000).toString('base64')); // 80 ms: a short word
+  clearInterval(audio.timer);
+  // a player like sox, which plays only whole 8 KB blocks
+  const played = () => Math.floor(Buffer.concat(spawned[0].written).length / 8192) * 8192;
+  let t = t0;
+  for (; t < t0 + 3000; t += 20) audio.tick(t);
+  const all = Buffer.concat(spawned[0].written);
+  const voice = 2 * FRAME_BYTES;
+  assert.ok(played() >= voice, `the word got out of an 8 KB buffer: ${played()} of ${all.length} bytes played`);
+  assert.ok(all.length < 16000 * 2 * 1.3, `and the silence stopped after about a second: ${all.length} bytes`);
+  assert.strictEqual(audio.tick(t + 20), null);
+  audio.close();
+});
+
 test('voice: no recorder is an error, not a crash', () => {
   const audio = new Audio({ send: () => {}, tools: { rec: null, play: null, hint: 'brew install sox' } });
   const errors = [];

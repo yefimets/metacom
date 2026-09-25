@@ -55,6 +55,10 @@ const main = async () => {
     await a.type(a.key.enter, 800);
     await b.wait(/ann ▁▁/);
     show(a, 'ann: muted');
+    await b.type('/voice stats');
+    await b.type(b.key.enter, 500);
+    await b.wait(/call stats[\s\S]*heard\s+\d+ frames/);
+    show(b, 'bob: /voice stats');
     // devices: this box may have nothing to list, which is said, not a crash; a name still goes
     await b.type('/devices');
     await b.type(b.key.enter, 1500);

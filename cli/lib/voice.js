@@ -15,8 +15,12 @@ const ms = (n) => Math.round((RATE * 2 * n) / 1000 / 2) * 2; // bytes of n milli
 // A speaker gathers this much before playing (network jitter); past MAX_LAG the oldest audio
 // goes, so a burst after a stall does not leave the call running behind for good.
 const PREBUFFER = ms(80);
-const MAX_LAG = ms(250);
-const KEEP_LAG = ms(120);
+const MAX_LAG = ms(400);
+const KEEP_LAG = ms(200);
+// After the last voice, the player is fed silence this long: sox plays nothing until its buffer
+// (8 KB, 256 ms, where a smaller one is refused) is full, so without it the end of a sentence
+// would wait inside sox until someone spoke again.
+const FLUSH_MS = 1000;
 
 /// Voice detection and levelling, the same numbers as the phone (hub/web/app.js).
 const SHAPE = {
@@ -263,6 +267,8 @@ class Audio extends EventEmitter {
     this.queues = new Map(); // speaker -> { buf, playing, last }
     this.timer = null;
     this.clock = null; // { t0, written } while the player is fed
+    this.lastVoice = 0;
+    this.stats = { frames: 0, bytes: 0, dropped: 0, gaps: 0, sent: 0 };
     this.variant = { recorder: 0, player: 0 }; // which of variants() works here
     this.broken = { recorder: false, player: false }; // every variant failed: stop trying
     this.wantMic = false;
@@ -321,6 +327,7 @@ class Audio extends EventEmitter {
       this.pending = this.pending.subarray(FRAME_BYTES);
       const { speaking, frames } = this.shaper.push(frame);
       for (const f of frames) this.send(f.toString('base64'));
+      this.stats.sent += frames.length;
       this.setSpeaking(speaking);
     }
   }
@@ -329,6 +336,21 @@ class Audio extends EventEmitter {
     if (this.speaking === on) return;
     this.speaking = on;
     this.emit('speaking', on);
+  }
+
+  /// What /voice stats shows: what came in and went out, what was dropped, and which command
+  /// is playing and recording (after any fallbacks).
+  report() {
+    const kb = (n) => `${Math.round(n / 1024)} KB`;
+    const cmd = (c) => (c ? (c.spawnargs || []).join(' ').slice(0, 90) : 'not running');
+    return [
+      `heard   ${this.stats.frames} frames, ${kb(this.stats.bytes)} (${(this.stats.bytes / (RATE * 2)).toFixed(1)} s of voice)`,
+      `dropped ${kb(this.stats.dropped)} to catch up · ${this.stats.gaps} gaps over 200 ms while someone spoke`,
+      `sent    ${this.stats.sent} frames from this mic · gate ${Math.round(this.shaper.threshold)} · gain ${this.shaper.gain.toFixed(1)}x`,
+      `player  ${cmd(this.player)}${this.broken.player ? ' · broken' : ''} (way ${this.variant.player + 1})`,
+      `mic     ${cmd(this.recorder)}${this.broken.recorder ? ' · broken' : ''} (way ${this.variant.recorder + 1})`,
+      `devices in: ${this.devices.input || 'system default'} · out: ${this.devices.output || 'system default'}`,
+    ].join('\n');
   }
 
   /// Switch the mic or the speaker to another device (null: the system's), live: the tool
@@ -358,8 +380,14 @@ class Audio extends EventEmitter {
     if (!bytes.length) return;
     const q = this.queues.get(from) || { buf: Buffer.alloc(0), playing: false, last: 0 };
     q.buf = Buffer.concat([q.buf, bytes]);
+    this.stats.frames++;
+    this.stats.bytes += bytes.length;
     // behind by more than MAX_LAG (a stall, then a burst): drop the oldest, back to KEEP_LAG
-    if (q.buf.length > MAX_LAG) q.buf = q.buf.subarray(q.buf.length - KEEP_LAG);
+    if (q.buf.length > MAX_LAG) {
+      this.stats.dropped += q.buf.length - KEEP_LAG;
+      q.buf = q.buf.subarray(q.buf.length - KEEP_LAG);
+    }
+    if (q.last && Date.now() - q.last > 200 && q.playing) this.stats.gaps++;
     q.last = Date.now();
     this.queues.set(from, q);
     if (!this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -370,7 +398,8 @@ class Audio extends EventEmitter {
   tick(now = Date.now()) {
     // a speaker starts once it has enough buffered, or once nothing more is coming
     const live = [...this.queues.entries()].filter(([, q]) => q.playing || q.buf.length >= PREBUFFER || now - q.last > 100);
-    if (!live.length) {
+    const flushing = this.clock && now - this.lastVoice < FLUSH_MS;
+    if (!live.length && !flushing) {
       this.clock = null;
       if (![...this.queues.values()].some((q) => q.buf.length)) {
         clearInterval(this.timer);
@@ -381,6 +410,7 @@ class Audio extends EventEmitter {
     if (!this.clock) this.clock = { t0: now, written: 0 };
     const due = Math.floor(((now - this.clock.t0) * RATE) / 1000) * 2 - this.clock.written + ms(TICK_MS);
     if (due <= 0) return null;
+    if (live.length) this.lastVoice = now;
     const chunks = [];
     for (const [name, q] of live) {
       q.playing = true;

@@ -21,6 +21,7 @@ type AudioLike = {
   play: (from: string, data: string) => void;
   close: () => void;
   setDevice: (kind: "input" | "output", name: string | null) => void;
+  report: () => string;
 };
 type Device = { name: string; label: string; default: boolean };
 type Devices = { input: string | null; output: string | null };
@@ -109,7 +110,7 @@ export const COMMANDS = [
   { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
   { name: "save", args: "[n] [dir]", help: "save the latest file sent in the room (n = 2 is the one before) to ~/Downloads" },
   { name: "open", args: "[n]", help: "save the latest file and open it" },
-  { name: "voice", args: "[on|off]", help: "join or leave the room's call (or click your name); headphones keep the echo out" },
+  { name: "voice", args: "[on|off|stats]", help: "join or leave the room's call (or click your name); headphones keep the echo out" },
   { name: "devices", args: "", help: "the mics and speakers here, numbered for /input and /output" },
   { name: "input", args: "[n|name|default]", help: "which mic the call uses; remembered, switches live" },
   { name: "output", args: "[n|name|default]", help: "which speaker or headphones the call plays on; remembered, switches live" },
@@ -703,6 +704,11 @@ export class Store {
         break;
       case "voice":
       case "call": {
+        if (/^stats?$/i.test(arg)) {
+          if (!this.audio) return this.note("not in a call · /voice joins this room's", "warn");
+          this.push({ type: "screen", name: "call", title: "call stats", text: this.audio.report() });
+          break;
+        }
         const want = arg === "" ? !this.state.call : /^(on|join|yes|1|true)$/i.test(arg);
         if (want && !this.state.call) await this.joinCall();
         else if (!want && this.state.call) await this.leaveCall();
