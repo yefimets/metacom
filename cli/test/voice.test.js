@@ -11,6 +11,8 @@ const fakeSpawner = () => {
   const spawner = (cmd, args) => {
     const child = new EventEmitter();
     child.cmd = cmd;
+    child.args = args;
+    child.stderr = new PassThrough();
     child.stdout = new PassThrough();
     child.stdin = new PassThrough();
     child.written = [];
@@ -109,6 +111,38 @@ test('voice: frames from two speakers are buffered, then mixed into one player',
   assert.strictEqual(audio.tick(now + 1000), null, 'nothing more is due at the same instant');
   const later = audio.tick(now + 1100);
   assert.ok(later.length > 0);
+  audio.close();
+});
+
+test('voice: a player that refuses the small buffer is retried with a larger one, quietly', () => {
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', ['-q', '--buffer', '1280', '-']], hint: '' }, spawner });
+  const errors = [];
+  audio.on('error', (e) => errors.push(e));
+  audio.write(Buffer.alloc(640));
+  spawned[0].emit('exit', 2); // CoreAudio says no at once
+  audio.write(Buffer.alloc(640));
+  assert.deepStrictEqual(spawned[1].args, ['-q', '--buffer', '4096', '-']);
+  assert.strictEqual(audio.player, spawned[1]);
+  assert.deepStrictEqual(errors, [], 'a fallback that works says nothing');
+  audio.close();
+});
+
+test('voice: a player that never works says why once, then stays off', () => {
+  const { spawned, spawner } = fakeSpawner();
+  const audio = new Audio({ send: () => {}, tools: { rec: null, play: ['play', ['--buffer', '1280', '-']], hint: '' }, spawner });
+  const errors = [];
+  audio.on('error', (e) => errors.push(e));
+  for (let i = 0; i < 20; i++) {
+    audio.write(Buffer.alloc(640));
+    const child = spawned.at(-1);
+    child.stderr.write('play FAIL formats: can\'t open output file `default\': no device\n');
+    if (audio.player === child) child.emit('exit', 1);
+  }
+  assert.strictEqual(spawned.length, 3, 'three variants, then no more');
+  assert.deepStrictEqual(spawned.map((c) => c.args), [['--buffer', '1280', '-'], ['--buffer', '4096', '-'], ['-']]);
+  assert.strictEqual(errors.length, 1);
+  assert.match(errors[0], /speaker does not work: play exited with 1 · play FAIL formats/);
   audio.close();
 });
 

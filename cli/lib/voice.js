@@ -55,6 +55,18 @@ const CANDIDATES = {
   ],
 };
 
+/// Ways to run a tool, best first. sox is asked for small buffers (less delay), but some audio
+/// drivers refuse one that small (CoreAudio output on a Mac quits at once): then a larger one,
+/// then sox's own default.
+const variants = (args) => {
+  const at = args.indexOf('--buffer');
+  if (at < 0) return [args];
+  const without = [...args.slice(0, at), ...args.slice(at + 2)];
+  return [args, [...args.slice(0, at), '--buffer', '4096', ...args.slice(at + 2)], without];
+};
+// a tool that exits this soon after it started did not work, rather than stopped
+const QUICK_EXIT_MS = 1500;
+
 const has = (cmd) => spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }).status === 0;
 
 /// What will record and what will play here, or why nothing can.
@@ -161,26 +173,46 @@ class Audio extends EventEmitter {
     this.queues = new Map(); // speaker -> { buf, playing, last }
     this.timer = null;
     this.clock = null; // { t0, written } while the player is fed
+    this.variant = { recorder: 0, player: 0 }; // which of variants() works here
+    this.broken = { recorder: false, player: false }; // every variant failed: stop trying
+    this.wantMic = false;
   }
 
   // MARK: mic
 
   startMic() {
+    this.wantMic = true;
     if (this.recorder) return true;
     if (!this.tools.rec) {
       this.emit('error', `no recorder for the mic · ${this.tools.hint}`);
       return false;
     }
-    const [cmd, args] = this.tools.rec;
-    const child = this.spawner(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'] });
-    this.recorder = child;
-    child.on('error', (e) => this.lost('recorder', child, e.message));
-    child.on('exit', (code) => this.lost('recorder', child, `${cmd} exited${code ? ' with ' + code : ''}`));
+    if (this.broken.recorder) return false;
+    const child = this.launch('recorder', this.tools.rec);
     child.stdout.on('data', (chunk) => this.captured(chunk));
     return true;
   }
 
+  /// Start the recorder or the player with its current variant, keeping the end of what it
+  /// says on stderr so a failure can be told in its own words.
+  launch(which, [cmd, args]) {
+    const list = variants(args);
+    const tried = this.variant[which];
+    const child = this.spawner(cmd, list[Math.min(tried, list.length - 1)], {
+      stdio: which === 'recorder' ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'ignore', 'pipe'],
+    });
+    child.startedAt = Date.now();
+    child.said = '';
+    child.variants = list.length;
+    if (child.stderr) child.stderr.on('data', (d) => (child.said = (child.said + d).slice(-300)));
+    this[which] = child;
+    child.on('error', (e) => this.lost(which, child, e.message, cmd));
+    child.on('exit', (code) => this.lost(which, child, `exited${code ? ' with ' + code : ''}`, cmd));
+    return child;
+  }
+
   stopMic() {
+    this.wantMic = false;
     const child = this.recorder;
     this.recorder = null;
     if (child) child.kill();
@@ -254,32 +286,39 @@ class Audio extends EventEmitter {
   }
 
   write(buf) {
+    if (this.broken.player) return;
     if (!this.player) {
       if (!this.tools.play) {
-        if (!this.warnedPlay) this.emit('error', `no player for the speaker · ${this.tools.hint}`);
-        this.warnedPlay = true;
+        this.broken.player = true;
+        this.emit('error', `no player for the speaker · ${this.tools.hint}`);
         return;
       }
-      const [cmd, args] = this.tools.play;
-      const child = this.spawner(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'] });
-      this.player = child;
-      child.on('error', (e) => this.lost('player', child, e.message));
-      child.on('exit', (code) => this.lost('player', child, `${cmd} exited${code ? ' with ' + code : ''}`));
-      child.stdin.on('error', () => {});
+      this.launch('player', this.tools.play).stdin.on('error', () => {});
     }
     this.player.stdin.write(buf);
   }
 
-  lost(which, child, why) {
-    if (which === 'recorder' && this.recorder === child) {
-      this.recorder = null;
-      this.setSpeaking(false);
-      this.emit('error', `mic stopped: ${why}`);
+  /// A recorder or player ended. One that quit at once did not work: try its next variant,
+  /// quietly; with none left, say why once and leave that half off for this call. One that ran
+  /// and then stopped is started again when it is next needed.
+  lost(which, child, why, cmd) {
+    if (this[which] !== child) return;
+    this[which] = null;
+    const part = which === 'recorder' ? 'mic' : 'speaker';
+    if (which === 'recorder') this.setSpeaking(false);
+    const said = child.said.trim().split('\n').filter(Boolean).pop();
+    if (Date.now() - child.startedAt < QUICK_EXIT_MS) {
+      if (this.variant[which] + 1 < child.variants) {
+        this.variant[which]++;
+        if (which === 'recorder') this.startMic();
+        return;
+      }
+      this.broken[which] = true;
+      this.emit('error', `${part} does not work: ${cmd} ${why}${said ? ' · ' + said : ''} · MC_VOICE_${which === 'recorder' ? 'REC' : 'PLAY'} sets another command`);
+      return;
     }
-    if (which === 'player' && this.player === child) {
-      this.player = null;
-      this.emit('error', `speaker stopped: ${why}`);
-    }
+    this.emit('error', `${part} stopped: ${cmd} ${why}${said ? ' · ' + said : ''}`);
+    if (which === 'recorder' && this.wantMic) this.startMic();
   }
 
   close() {
