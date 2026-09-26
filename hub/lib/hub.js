@@ -7,7 +7,6 @@ const { ROOM, Store } = require('./store.js');
 const { Media } = require('./media.js');
 const { route } = require('./router.js');
 const { fail } = require('./errors.js');
-const { Voice } = require('./voice.js');
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
 const STATUSES = new Set(['starting', 'working', 'waiting', 'blocked', 'stopped']);
@@ -66,7 +65,6 @@ class Hub {
     this.byName = new Map();
     this.waiters = new Map();
     this.reads = new Map();
-    this.voice = new Voice(this);
   }
 
   // MARK: connections
@@ -82,7 +80,6 @@ class Hub {
     const conn = this.conns.get(client);
     if (!conn) return;
     this.conns.delete(client);
-    this.events.emit('conn/closed', conn);
     if (!conn.name || conn.follow) return;
     const set = this.byName.get(conn.name);
     if (set) {
@@ -112,10 +109,10 @@ class Hub {
 
   /// The connection behind a call. Websocket callers signed in earlier; HTTP callers
   /// pass their token with every call and get an ephemeral connection.
-  identify(context, args = {}, { tick = true } = {}) {
+  identify(context, args = {}) {
     const bound = this.conns.get(context.client);
     if (bound) {
-      if (tick) this.tick(bound);
+      this.tick(bound);
       return bound;
     }
     if (args && typeof args.token === 'string') {

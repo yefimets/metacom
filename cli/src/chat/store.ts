@@ -14,30 +14,6 @@ const media = require("../../lib/media.js") as {
   saveAs: (o: { http: string; media: Media; dir?: string }) => Promise<string>;
   openFile: (file: string) => boolean;
 };
-type AudioLike = {
-  on: (event: "speaking" | "error" | "info", fn: (x: any) => void) => void;
-  startMic: () => boolean;
-  stopMic: () => void;
-  play: (from: string, data: string) => void;
-  close: () => void;
-  setDevice: (kind: "input" | "output", name: string | null) => void;
-  report: () => string;
-  setVolume: (who: string | null, v: number) => void;
-  setMicGain: (v: number | null) => void;
-  shaper: { gain: number };
-};
-type Device = { name: string; label: string; default: boolean };
-type Volume = { master: number; people: Record<string, number> };
-type Devices = { input: string | null; output: string | null; volume?: Volume; micGain?: number | null };
-const voice = require("../../lib/voice.js") as {
-  Audio: new (o: { send: (data: string) => void; devices?: Devices; volume?: Volume; shape?: { fixedGain: number | null } }) => AudioLike;
-  parseVolume: (arg: string, current: number, max?: number) => number | null;
-  listDevices: () => { inputs?: Device[]; outputs?: Device[]; error?: string };
-  resolveDevice: (arg: string, list: Device[] | null) => { name?: string | null; error?: string };
-  loadPrefs: () => Devices;
-  savePrefs: (p: Devices) => void;
-  tools: () => { rec: [string, string[]] | null };
-};
 
 export type Media = { url: string; type: string; size: number; name: string };
 export type Attachment = { file: string; name: string; type: string; size: number; token: string };
@@ -68,10 +44,6 @@ export type Message = {
   text: string;
   media?: Media[];
 };
-/// Someone in the room's call: the mic on or muted, and whether their voice is coming through.
-export type Participant = { name: string; mic: boolean; speaking: boolean; since: string };
-/// My own place in a call: which room, the mic, and my voice as this machine hears it.
-export type MyCall = { room: string; mic: boolean; speaking: boolean };
 export type RoomSummary = { room: string; agents: number; online: number; working: number; blocked: number; attention: number };
 export type Tone = "dim" | "ok" | "warn" | "error" | "plain";
 type Distribute<T> = T extends unknown ? Omit<T, "id"> : never;
@@ -80,7 +52,7 @@ export type Entry =
   | { id: string; type: "message"; msg: Message; grouped: boolean }
   | { id: string; type: "note"; tone: Tone; text: string; ts: string }
   | { id: string; type: "members"; members: Member[] }
-  | { id: string; type: "screen"; name: string; text: string; title?: string }
+  | { id: string; type: "screen"; name: string; text: string }
   | { id: string; type: "rooms"; rooms: RoomSummary[] }
   | { id: string; type: "help" }
   | { id: string; type: "rule"; text: string };
@@ -96,8 +68,6 @@ export type State = {
   // or what the chat is waiting for. Short-lived, and never worth a place in the conversation.
   attachments: Attachment[]; // files whose tokens may be in the draft
   mouse: boolean; // the chat holds the mouse: it draws the selection and handles clicks
-  voice: Map<string, Participant>; // who is in this room's call
-  call: MyCall | null; // me, when I am in it
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
@@ -116,13 +86,6 @@ export const COMMANDS = [
   { name: "attach", args: "<path>", help: "put a file into the message (or paste a path, or cmd+v an image)" },
   { name: "save", args: "[n] [dir]", help: "save the latest file sent in the room (n = 2 is the one before) to ~/Downloads" },
   { name: "open", args: "[n]", help: "save the latest file and open it" },
-  { name: "voice", args: "[on|off|stats]", help: "join or leave the room's call (or click your name); headphones keep the echo out" },
-  { name: "devices", args: "", help: "the mics and speakers here, numbered for /input and /output" },
-  { name: "input", args: "[n|name|default]", help: "which mic the call uses; remembered, switches live" },
-  { name: "output", args: "[n|name|default]", help: "which speaker or headphones the call plays on; remembered, switches live" },
-  { name: "volume", args: "[150%|+|-|<name> 200%]", help: "how loud the call plays, for everyone or one person (up to 400%)" },
-  { name: "mic", args: "[150%|+|-|auto]", help: "how loud you are sent: fixed up to 1600%, or auto (levelled)" },
-  { name: "mute", args: "", help: "turn your mic off or on again, staying in the call (or click the bars by your name)" },
   { name: "rooms", args: "", help: "all rooms with counts (or ← on an empty line)" },
   { name: "room", args: "<name>", help: "open another room, creating it if it is new" },
   { name: "theme", args: "[name]", help: "switch the colour theme" },
@@ -166,7 +129,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, status: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0", voice: new Map(), call: null };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, status: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -230,12 +193,6 @@ export class Store {
     hub.api.agents.on("message", (m: Message) => {
       if (m.from && m.from.name !== name) this.onBell();
     });
-    if (hub.api.voice) {
-      hub.api.voice.on("changed", (s: { room: string; participants: Participant[] }) => this.onVoice(s.room, s.participants));
-      hub.api.voice.on("frame", (f: { room: string; from: string; data: string }) => {
-        if (this.audio && this.state.call && f.room === this.state.call.room) this.audio.play(f.from, f.data);
-      });
-    }
     hub.m.on("close", () => this.setBusy("reconnecting…"));
     hub.m.on("open", () => this.setBusy(null));
     this.push({ type: "banner" });
@@ -247,11 +204,6 @@ export class Store {
     const hub = this.hub!;
     const history: Message[] = await hub.api.room.history({ room: this.state.room, limit: 30 });
     this.onMembers(await hub.api.agents.list({}));
-    if (hub.api.voice) {
-      const calls: { room: string; participants: Participant[] }[] = await hub.api.voice.calls({}).catch(() => []);
-      const here = calls.find((c) => c.room === this.state.room);
-      this.onVoice(this.state.room, here ? here.participants : []);
-    }
     for (const m of history) this.push({ type: "message", msg: m, grouped: this.group(m) });
     if (history.length) this.push({ type: "rule", text: "now" });
   }
@@ -270,9 +222,7 @@ export class Store {
       return false;
     }
     const was = this.state.room;
-    // a call belongs to its room: moving on hangs up, like walking out of the room would
-    if (this.state.call) await this.leaveCall(true);
-    this.set({ room, log: [], members: new Map(), voice: new Map() });
+    this.set({ room, log: [], members: new Map() });
     this.lastMessage = null;
     this.states.clear();
     this.marks.clear();
@@ -297,9 +247,6 @@ export class Store {
     await hub.api.agents.register({ name, room, kind, host: os.hostname() });
     if (kind === "human") await hub.api.room.join({ room });
     await hub.api.agents.status({ status: "waiting" });
-    // after a reconnect the hub has forgotten the call this window was in
-    const call = this.state.call;
-    if (again && call && hub.api.voice) await hub.api.voice.join({ room: call.room, mic: call.mic }).catch(() => {});
   }
 
   /// Consecutive messages from one sender within two minutes drop the repeated time and name.
@@ -342,95 +289,6 @@ export class Store {
       }
       this.marks.set(m.name, stuck ? "blocked" : "");
       if (!was || was === state) continue;
-    }
-  }
-
-  // MARK: calls
-
-  private audio: AudioLike | null = null;
-
-  private onVoice(room: string, list: Participant[]): void {
-    if (room !== this.state.room) return;
-    const before = this.state.voice;
-    const voice = new Map(list.map((p) => [p.name, p]));
-    this.set({ voice });
-    const me = this.state.me.name;
-    const joined = list.filter((p) => !before.has(p.name) && p.name !== me).map((p) => p.name);
-    const left = [...before.keys()].filter((n) => !voice.has(n) && n !== me);
-    if (joined.length) this.setStatus(`${joined.join(", ")} joined the call`, "ok", 3000);
-    else if (left.length) this.setStatus(`${left.join(", ")} left the call`, "plain", 3000);
-  }
-
-  /// Anyone talking, me included: the chat keeps its animation tick running for the bars.
-  get talking(): boolean {
-    return Boolean(this.state.call?.speaking) || [...this.state.voice.values()].some((p) => p.speaking && p.name !== this.state.me.name);
-  }
-
-  /// Join this room's call with the mic on. The recorder starts here; the player when the
-  /// first voice arrives.
-  async joinCall(): Promise<void> {
-    const api = this.hub?.api;
-    if (!api?.voice) return this.note("this hub has no calls yet · update and restart it", "warn");
-    const room = this.state.room;
-    const rec = voice.tools().rec;
-    await api.voice.join({ room, mic: true, tool: rec ? rec[0] + " " + rec[1].join(" ") : "none" });
-    const audio = new voice.Audio({
-      send: (data) => {
-        api.voice!.frame({ data }).catch(() => {});
-      },
-      devices: voice.loadPrefs(),
-      volume: voice.loadPrefs().volume,
-      shape: { fixedGain: voice.loadPrefs().micGain ?? null },
-    });
-    audio.on("speaking", (on: boolean) => {
-      if (this.state.call) this.set({ call: { ...this.state.call, speaking: on } });
-    });
-    audio.on("error", (msg: string) => this.note(`call: ${msg}`, "warn"));
-    audio.on("info", (msg: string) => this.setStatus(`call: ${msg}`, "plain", 5000));
-    this.audio = audio;
-    this.set({ call: { room, mic: true, speaking: false } });
-    const mic = audio.startMic();
-    this.setStatus(mic ? `joined the call in ${room} · /mute or click the bars to mute · /voice off to leave` : `joined the call in ${room}, listening only`, "ok", 4000);
-    if (!mic) await this.setMic(false, true);
-  }
-
-  async leaveCall(quiet = false): Promise<void> {
-    this.audio?.close();
-    this.audio = null;
-    const was = this.state.call;
-    this.set({ call: null });
-    if (!was) return;
-    await this.hub?.api.voice?.leave({}).catch(() => {});
-    if (!quiet) this.setStatus(`left the ${was.room} call`, "plain", 2500);
-  }
-
-  async setMic(on: boolean, quiet = false): Promise<void> {
-    const call = this.state.call;
-    if (!call) return this.note("not in a call · /voice joins this room's", "warn");
-    if (on && this.audio && !this.audio.startMic()) return;
-    if (!on) this.audio?.stopMic();
-    this.set({ call: { ...call, mic: on, speaking: false } });
-    await this.hub!.api.voice!.mic({ on });
-    if (!quiet) this.setStatus(on ? "mic on" : "muted · you still hear the room", "ok", 2500);
-  }
-
-  /// What clicking your own name does: in or out of the call.
-  async toggleCall(): Promise<void> {
-    try {
-      if (this.state.call) await this.leaveCall();
-      else await this.joinCall();
-    } catch (error) {
-      this.failure(error);
-    }
-  }
-
-  /// What clicking the bars by your name does.
-  async toggleMic(): Promise<void> {
-    try {
-      if (!this.state.call) await this.joinCall();
-      else await this.setMic(!this.state.call.mic);
-    } catch (error) {
-      this.failure(error);
     }
   }
 
@@ -714,99 +572,6 @@ export class Store {
         if (!arg) return this.note("usage: /room <name> · or ← on an empty line for the list", "warn");
         await this.switchRoom(arg);
         break;
-      case "voice":
-      case "call": {
-        if (/^stats?$/i.test(arg)) {
-          if (!this.audio) return this.note("not in a call · /voice joins this room's", "warn");
-          this.push({ type: "screen", name: "call", title: "call stats", text: this.audio.report() });
-          break;
-        }
-        const want = arg === "" ? !this.state.call : /^(on|join|yes|1|true)$/i.test(arg);
-        if (want && !this.state.call) await this.joinCall();
-        else if (!want && this.state.call) await this.leaveCall();
-        else this.setStatus(want ? "already in the call" : "not in a call", "plain", 2000);
-        break;
-      }
-      case "devices": {
-        const d = voice.listDevices();
-        if (d.error) return this.note(d.error, "warn");
-        const prefs = voice.loadPrefs();
-        const rows = (list: Device[], chosen: string | null) =>
-          list.map((x, i) => `  ${chosen === x.name ? "▸" : " "} ${i + 1}. ${x.label}${x.label !== x.name ? `  (${x.name})` : ""}${x.default ? "  · system default" : ""}`);
-        const text = [
-          `input  (mic)   now: ${prefs.input ?? "system default"}`,
-          ...rows(d.inputs ?? [], prefs.input),
-          "",
-          `output (sound) now: ${prefs.output ?? "system default"}`,
-          ...rows(d.outputs ?? [], prefs.output),
-          "",
-          "/input 2 · /output 3 · /output airpods · /input default",
-        ].join("\n");
-        this.push({ type: "screen", name: "audio", title: "audio devices", text });
-        break;
-      }
-      case "volume":
-      case "vol": {
-        const prefs = voice.loadPrefs();
-        const vol: Volume = prefs.volume ?? { master: 1, people: {} };
-        const pct = (v: number) => `${Math.round(v * 100)}%`;
-        if (!arg) {
-          const people = Object.entries(vol.people).filter(([, v]) => v !== 1);
-          return this.setStatus(`volume ${pct(vol.master)}${people.map(([n, v]) => ` · ${n} ${pct(v)}`).join("")} · /volume 150% · /volume <name> 200%`, "plain", 5000);
-        }
-        // `/volume 150%`, `/volume +`, or `/volume roma2 200%`
-        const [first, second] = rest;
-        const who = second !== undefined ? first!.replace(/^@/, "") : null;
-        const current = who ? (vol.people[who] ?? 1) : vol.master;
-        const v = voice.parseVolume(second ?? first ?? "", current);
-        if (v === null) return this.note("usage: /volume 150% · /volume + · /volume - · /volume <name> 200% · /volume reset", "warn");
-        if (who) vol.people[who] = v;
-        else vol.master = v;
-        voice.savePrefs({ ...prefs, volume: vol });
-        this.audio?.setVolume(who, v);
-        this.setStatus(`${who ? who + "'s " : ""}volume ${pct(v)}${v > 1 ? " · peaks are rounded, not clipped" : ""}`, "ok", 3000);
-        break;
-      }
-      case "mic": {
-        const prefs = voice.loadPrefs();
-        const pct = (v: number) => `${Math.round(v * 100)}%`;
-        const now = this.audio ? ` · gain now ${this.audio.shaper.gain.toFixed(1)}x` : "";
-        if (!arg) return this.setStatus(`mic ${prefs.micGain == null ? "auto" : pct(prefs.micGain)}${now} · /mic 150% · /mic + · /mic auto`, "plain", 5000);
-        let v: number | null;
-        if (/^(auto|reset|default)$/i.test(arg)) v = null;
-        else {
-          // + and - step from the gain in use, so they work from auto too
-          const current = prefs.micGain ?? this.audio?.shaper.gain ?? 1;
-          v = voice.parseVolume(arg, current, 16);
-          if (v === null) return this.note("usage: /mic 150% · /mic + · /mic - · /mic auto (up to 1600%)", "warn");
-        }
-        voice.savePrefs({ ...prefs, micGain: v });
-        this.audio?.setMicGain(v);
-        this.setStatus(v === null ? "mic auto · your voice is levelled for you" : `mic ${pct(v)} fixed · /mic auto to level it again`, "ok", 3500);
-        break;
-      }
-      case "input":
-      case "output": {
-        const kind = cmd as "input" | "output";
-        const prefs = voice.loadPrefs();
-        if (!arg) return this.setStatus(`${kind}: ${prefs[kind] ?? "system default"} · /devices lists the others`, "plain", 4000);
-        const d = voice.listDevices();
-        const list = d.error ? null : (kind === "input" ? d.inputs : d.outputs) ?? null;
-        const pick = voice.resolveDevice(arg, list);
-        if (pick.error) return this.note(pick.error, "warn");
-        const name = pick.name ?? null;
-        voice.savePrefs({ ...prefs, [kind]: name });
-        this.audio?.setDevice(kind, name);
-        const label = name ? (list?.find((x) => x.name === name)?.label ?? name) : "the system default";
-        this.setStatus(`${kind === "input" ? "mic" : "sound"}: ${label}${this.audio ? "" : " · used from the next /voice"}`, "ok", 4000);
-        break;
-      }
-      case "mute":
-      case "unmute": {
-        if (!this.state.call) return this.note("not in a call · /voice joins this room's", "warn");
-        await this.setMic(cmd === "unmute" ? true : !this.state.call.mic);
-        break;
-      }
       case "rooms":
         this.push({ type: "rooms", rooms: await api.room.list({}) });
         break;
@@ -851,8 +616,6 @@ export class Store {
   }
 
   quit(): void {
-    this.audio?.close();
-    this.audio = null;
     try {
       this.hub?.m.close();
     } catch {
