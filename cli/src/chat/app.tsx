@@ -407,10 +407,12 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
           return refresh();
         }
         if (action === "reply") {
-          // the same thing as clicking a name: address them and let you write
+          // address them, and answer this very message: an agent carries on the conversation of
+          // its thread, where a plain @name would start it a clean one
           const author = msg.from?.name;
           const who = author && author !== me ? author : msg.to && msg.to !== me ? msg.to : null;
           if (who) address(who);
+          store.setReply(msg);
           return refresh();
         }
         // forward: hold the message, ask who for, and send it on when the name is picked
@@ -592,6 +594,12 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     if (key.escape) {
       const twice = Date.now() - lastEsc.current < 900;
       lastEsc.current = Date.now();
+      // a reply being written goes first: esc makes it a plain message again
+      if (store.state.replyTo) {
+        store.setReply(null);
+        store.setStatus("not a reply any more · a plain @agent starts a clean context", "warn", 2000);
+        return refresh();
+      }
       // a message held for forwarding goes first: esc puts it down
       if (forwardRef.current) {
         setForward(null);

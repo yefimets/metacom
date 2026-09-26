@@ -18,6 +18,7 @@ const KINDS = new Set(['agent', 'human']);
 const MAX_TEXT = 16 * 1024;
 const RATE_WINDOW = 10_000;
 const RATE_CALLS = 200;
+const THREADS_KEPT = 5000;
 
 const now = () => new Date().toISOString();
 
@@ -65,6 +66,7 @@ class Hub {
     this.byName = new Map();
     this.waiters = new Map();
     this.reads = new Map();
+    this.threads = new Map(); // message id -> thread id (the first message of its thread), recent ones
   }
 
   // MARK: connections
@@ -297,8 +299,8 @@ class Hub {
   }
 
   publicMember(m) {
-    const { name, kind, room, repo, caps = [], host, command, status, connected, since, lastSeen, attention, reason, accept } = m;
-    return { name, kind, room, repo, caps, host, command, status, connected: Boolean(connected), since, lastSeen, attention: Boolean(attention), reason: reason || null, accept: kind === 'agent' ? accept || 'owner' : undefined };
+    const { name, kind, room, repo, caps = [], host, command, status, connected, since, lastSeen, attention, reason, accept, thread } = m;
+    return { name, kind, room, repo, caps, host, command, status, connected: Boolean(connected), since, lastSeen, attention: Boolean(attention), reason: reason || null, accept: kind === 'agent' ? accept || 'owner' : undefined, thread: thread || null };
   }
 
   saveMembers() {
@@ -321,18 +323,50 @@ class Hub {
     return { room: conn.room };
   }
 
-  say(conn, room, body, media = null) {
+  // MARK: threads
+  //
+  // A message that answers another (`replyTo`) belongs to that one's thread; any other message
+  // starts a thread of its own. An agent's answers — what it says in the room, notes, replies to
+  // whoever gave it the command — join the thread of the command it is working on, so a reply to
+  // the answer carries on the same conversation. A command it sends another agent is new work
+  // and starts a thread, unless it replies on purpose.
+
+  threadOf(conn, msgId, replyTo, { answer = true, to = null } = {}) {
+    if (replyTo) {
+      replyTo = String(replyTo).replace(/^#/, '').slice(0, 64);
+      // agents see ids shortened to 8 characters (hub_read): the newest message they start
+      if (replyTo.length < 36) {
+        const full = [...this.threads.keys()].reverse().find((k) => k.startsWith(replyTo));
+        if (full) replyTo = full;
+      }
+      return { replyTo, thread: this.threads.get(replyTo) || replyTo };
+    }
+    const member = conn.name ? this.members.get(conn.name) : null;
+    if (answer && member && member.kind === 'agent' && member.thread && (!to || to === member.threadFrom)) {
+      return { replyTo: member.threadMsg, thread: member.thread };
+    }
+    return { replyTo: null, thread: msgId };
+  }
+
+  remember(msg) {
+    this.threads.set(msg.id, msg.thread);
+    if (this.threads.size > THREADS_KEPT) this.threads.delete(this.threads.keys().next().value);
+  }
+
+  say(conn, room, body, media = null, replyTo = null) {
     const target = room || (conn.room !== '*' ? conn.room : null);
     if (!target) throw fail(400, 'room is required');
     const files = this.media.attachments(media);
     const msg = { id: id(), ts: now(), room: target, kind: 'say', from: this.from(conn), text: text(body, 'text', Boolean(files)) };
+    Object.assign(msg, this.threadOf(conn, msg.id, replyTo));
+    this.remember(msg);
     if (files) msg.media = files;
     this.store.appendRoom(target, msg);
     this.broadcast('room/message', msg, target);
     return msg;
   }
 
-  async send(conn, to, body, kind = 'command', wait = null, media = null) {
+  async send(conn, to, body, kind = 'command', wait = null, media = null, replyTo = null) {
     const member = this.members.get(String(to || ''));
     if (!member) throw fail(404, `No agent named "${to}"`);
     if (!['command', 'info'].includes(kind)) throw fail(400, 'kind must be command or info');
@@ -349,6 +383,14 @@ class Hub {
       throw fail(409, `${member.name} is blocked on a question; answer it (metacom read/!keys) or send !cancel first`);
     }
     const msg = { id: id(), ts: now(), room: member.room, kind, from: this.from(conn), to: member.name, text: body };
+    // a command to another agent is new work; notes and answers stay in the sender's thread
+    Object.assign(msg, this.threadOf(conn, msg.id, replyTo, { answer: kind !== 'command' || member.kind !== 'agent', to: member.name }));
+    this.remember(msg);
+    if (kind === 'command') {
+      member.thread = msg.thread;
+      member.threadMsg = msg.id;
+      member.threadFrom = msg.from.name;
+    }
     if (files) msg.media = files;
     this.pushInbox(member.name, msg);
     this.store.appendRoom(member.room, msg);

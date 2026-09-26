@@ -43,6 +43,8 @@ export type Message = {
   to?: string;
   text: string;
   media?: Media[];
+  replyTo?: string | null; // the message this one answers
+  thread?: string; // the first message of its thread
 };
 export type RoomSummary = { room: string; agents: number; online: number; working: number; blocked: number; attention: number };
 export type Tone = "dim" | "ok" | "warn" | "error" | "plain";
@@ -68,6 +70,7 @@ export type State = {
   // or what the chat is waiting for. Short-lived, and never worth a place in the conversation.
   attachments: Attachment[]; // files whose tokens may be in the draft
   mouse: boolean; // the chat holds the mouse: it draws the selection and handles clicks
+  replyTo: Message | null; // the message the next one answers (↩ reply): an agent carries on that thread's conversation
 };
 
 type Api = Record<string, Record<string, (args?: object) => Promise<any>> & { on: (event: string, fn: (data: any) => void) => void }>;
@@ -129,7 +132,7 @@ export class Store {
 
   constructor({ name, room, config }: { name: string; room: string; config: Config }) {
     this.config = config;
-    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, status: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0" };
+    this.state = { me: { name, role: "?" }, room, url: config.url, members: new Map(), log: [], busy: null, status: null, attachments: [], mouse: process.env["MC_MOUSE"] !== "0", replyTo: null };
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -367,6 +370,21 @@ export class Store {
 
   // MARK: actions
 
+  /// Answer `msg` with the next message (↩ reply), or stop answering it (null). An agent that gets
+  /// a command answering a message carries on the conversation it had in that thread; a plain
+  /// @agent command starts a clean one.
+  setReply(msg: Message | null): void {
+    this.set({ replyTo: msg });
+    if (!msg) return this.setStatus(null);
+    const who = msg.from?.name ?? "?";
+    const gist = msg.text.replace(/\s+/g, " ").slice(0, 40);
+    this.setStatus(`replying to ${who}: ${gist}${msg.text.length > 40 ? "…" : ""} · the thread goes on · esc cancels`, "ok");
+  }
+
+  private get replyId(): string | undefined {
+    return this.state.replyTo?.id;
+  }
+
   /// False when the hub refused it, so the app can give the draft back.
   async submit(text: string): Promise<boolean> {
     const t = text.trim();
@@ -380,8 +398,9 @@ export class Store {
       else if (this.mentioned(t)) await this.directed(t);
       else if (t.startsWith(">")) await this.dispatch(t.slice(1).trim());
       else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel", "warn");
-      else await this.hub!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t) });
+      else await this.hub!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t), replyTo: this.replyId });
       this.prune();
+      if (this.state.replyTo && !t.startsWith("/")) this.setReply(null);
       return true;
     } catch (error) {
       this.failure(error);
@@ -488,7 +507,7 @@ export class Store {
     }
     if (!body) return this.note(`say something after @${to}`, "warn");
     const kind = member.kind === "agent" ? "command" : "info";
-    const r = await this.hub!.api.agents.send({ to, text: body, kind, media: await this.uploadAll(body) });
+    const r = await this.hub!.api.agents.send({ to, text: body, kind, media: await this.uploadAll(body), replyTo: this.replyId });
     if (!r.delivered) this.note(`${to} is offline, queued until it is back`);
   }
 

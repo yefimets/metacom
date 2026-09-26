@@ -138,6 +138,12 @@
   #composer #attach { flex: 0 0 auto; height: auto; min-height: 36px; width: 36px; padding: 0; font-size: 18px; line-height: 34px; text-align: center; }
   #composer #attach input { display: none; }
   /* files queued for the next message: thumbnails with a corner × */
+  /* reply: ↩ on a message answers it; an agent then carries on that thread's conversation */
+  .msg .meta .re { margin-left: 8px; color: var(--dim); padding: 0 6px; font-size: 13px; }
+  .msg .meta .re:active { color: var(--fg); }
+  #replying { display: flex; align-items: center; gap: 8px; border-left: 2px solid var(--fg); padding: 2px 8px; color: var(--dim); font-size: 12px; }
+  #replying .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #replying .x { color: var(--fg); padding: 0 6px; }
   #files { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   #files::-webkit-scrollbar { display: none; }
   #files .file { position: relative; flex: 0 0 auto; width: 56px; height: 56px; border: 1px solid var(--fg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -210,6 +216,7 @@
 </div>
 
 <form id="composer" autocomplete="off">
+  <div id="replying" class="hidden"><span class="what"></span><button class="x" type="button" aria-label="not a reply">×</button></div>
   <div id="files" class="hidden"></div>
   <div id="mention" class="hidden"></div>
   <div class="line">

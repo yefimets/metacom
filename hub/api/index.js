@@ -42,14 +42,14 @@ const buildApi = ({ hub, auth, console, assistant }) => {
       read: method(async ({ name, lines, ...rest } = {}, context) => hub.read(hub.identify(context, rest), name, lines)),
       readReply: method(async ({ id, text, ...rest } = {}, context) => hub.readReply(hub.identify(context, rest), id, text)),
       list: method(async ({ room, ...rest } = {}, context) => hub.list(hub.identify(context, rest), room)),
-      send: method(async ({ to, text, kind, wait, media, ...rest } = {}, context) => hub.send(hub.identify(context, rest), to, text, kind, wait, media)),
+      send: method(async ({ to, text, kind, wait, media, replyTo, ...rest } = {}, context) => hub.send(hub.identify(context, rest), to, text, kind, wait, media, replyTo)),
       dispatch: method(async ({ text, room, media, ...rest } = {}, context) => hub.dispatch(hub.identify(context, rest), text, room, media)),
       inbox: method(async ({ since, ...rest } = {}, context) => hub.inboxFor(hub.identify(context, rest), since)),
       ack: method(async ({ ids, ...rest } = {}, context) => hub.ack(hub.identify(context, rest), ids)),
     },
     room: {
       join: method(async ({ room, ...rest } = {}, context) => hub.join(hub.identify(context, rest), room)),
-      say: method(async ({ room, text, media, ...rest } = {}, context) => hub.say(hub.identify(context, rest), room, text, media)),
+      say: method(async ({ room, text, media, replyTo, ...rest } = {}, context) => hub.say(hub.identify(context, rest), room, text, media, replyTo)),
       history: method(async ({ room, limit, since, ...rest } = {}, context) => hub.history(hub.identify(context, rest), room, limit, since)),
       list: method(async (args = {}, context) => {
         hub.identify(context, args);

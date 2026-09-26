@@ -6,6 +6,7 @@ const pty = require('node-pty');
 const { connect } = require('./client.js');
 const { Screen, blockedReason } = require('./screen.js');
 const { download } = require('./media.js');
+const { Threads, transcriptExists } = require('./threads.js');
 
 // Spinner glyphs Claude Code puts in the terminal title while it works.
 const GLYPHS = new Set(['◐', '◓', '◑', '◒', '✢', '✶', '✻', '✽', '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']);
@@ -74,6 +75,9 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   if (!config.agentToken) process.stderr.write('metacom: no agent token in config, using the owner token (run: metacom token <name> --role agent --save)\n');
   const isClaude = path.basename(command) === 'claude';
   const isCodex = path.basename(command) === 'codex';
+  // Claude Code: one conversation per thread of the room (lib/threads.js). MC_THREADS=0 turns it off.
+  const ownSession = args.some((a) => ['--resume', '-r', '--continue', '-c', '--session-id', '--settings'].includes(a));
+  const threads = isClaude && process.env.MC_THREADS !== '0' && !ownSession ? new Threads({ name, cwd: process.cwd() }) : null;
   const cwd = process.cwd();
   const fullCommand = [command, ...args].join(' ');
   const gate = parseAccept(accept);
@@ -93,6 +97,11 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     .map((m) => `${m.name} on ${m.host || '?'}${m.repo ? ' in ' + m.repo : ''}, accepts ${Array.isArray(m.accept) ? m.accept.join(',') : m.accept || 'owner'}`);
 
   const extra = [];
+  if (threads) {
+    extra.push('--settings', threads.settings());
+    // a restarted agent carries on the conversation it had, if Claude still has it
+    if (threads.last && transcriptExists(process.cwd(), threads.last)) extra.push('--resume', threads.last);
+  }
   // The room as MCP tools plus the room prompt, for the harnesses that take them. Without the
   // tools an agent reads what is typed into it but can only answer on its own screen.
   const bridge = {
@@ -122,13 +131,15 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
   // in. Under tmux Claude Code sees TERM_PROGRAM=tmux and stops sending the progress state and
   // title spinner the status below is read from, so it stays "waiting" while it works: present
   // a plain xterm to the child and forward whatever it emits.
-  const { TMUX, TMUX_PANE, TERM_PROGRAM, TERM_PROGRAM_VERSION, STY, ...cleanEnv } = process.env;
+  // Started from inside a Claude Code session (a background job, say), the child would inherit
+  // its markers and run as a child session that saves no transcript, so nothing could be resumed.
+  const { TMUX, TMUX_PANE, TERM_PROGRAM, TERM_PROGRAM_VERSION, STY, CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_MESSAGING_SOCKET, CLAUDE_CODE_MESSAGING_TOKEN, CLAUDE_CODE_SESSION_ATTENDED, CLAUDE_CODE_AGENT, CLAUDE_CODE_EXECPATH, ...cleanEnv } = process.env;
   const term = pty.spawn(command, [...args, ...extra], {
     name: 'xterm-256color',
     cols,
     rows,
     cwd,
-    env: { ...cleanEnv, TERM: 'xterm-256color', MC_AGENT: name, MC_ROOM: room, MC_HUB_URL: url, MC_TOKEN: token },
+    env: { ...cleanEnv, TERM: 'xterm-256color', MC_AGENT: name, MC_ROOM: room, MC_HUB_URL: url, MC_TOKEN: token, ...(threads ? { MC_SESSION_FILE: threads.hookFile } : {}) },
   });
 
   // MARK: status. Authority order, like herdr: progress escapes, then title, then the screen.
@@ -206,7 +217,10 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     if (busy) return update('working', progressSeen ? 'progress' : busySignal ? 'title' : 'screen');
     return update('waiting', signalled ? 'idle' : 'quiet');
   };
-  const ticker = setInterval(classify, 400);
+  const ticker = setInterval(() => {
+    classify();
+    if (threads) for (const s of threads.poll()) trace(`session ${s.source} ${s.id.slice(0, 8)}`);
+  }, 400);
 
   // MARK: inbox. Commands and notes are typed when idle; control commands act at once. The hub
   // already turned commands from agents this one does not accept into notes.
@@ -286,6 +300,26 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
       return;
     }
     flushing = true;
+    const next = queue[0];
+    // Threads: a command that replies to nothing gets a clean context (/clear); one that replies
+    // into a thread goes back to that thread's conversation (/resume <id>) first. Either way the
+    // message itself is typed on a later pass, once Claude has said which session is open.
+    if (threads && !next.prepared) {
+      next.prepared = true;
+      const plan = threads.plan(next);
+      if (plan.action !== 'type') {
+        const line = plan.action === 'clear' ? '/clear' : `/resume ${plan.sid}`;
+        trace(`thread ${String(next.thread).slice(0, 8)}: ${line}`);
+        term.write(line);
+        setTimeout(() => term.write('\r'), 300);
+        threads.next(8000).then((id) => {
+          if (!id) trace(`thread: no session reported after ${line}; typing into the open one`);
+          flushing = false;
+          setTimeout(flush, 800);
+        });
+        return;
+      }
+    }
     const msg = queue.shift();
     const text = `[hub ${msg.from.name}${msg.kind === 'info' ? ' (info)' : ''}] ${msg.text}`;
     trace(`type ${msg.id.slice(0, 8)} (status ${status}, ${Date.now() - lastOutput}ms quiet)`);
@@ -294,6 +328,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
       term.write('\r');
       trace(`enter ${msg.id.slice(0, 8)}`);
       ack(msg);
+      if (threads) threads.typed(msg);
       flushing = false;
       setTimeout(flush, 1500);
     }, 200);
@@ -327,6 +362,7 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
 
   term.onExit(async ({ exitCode }) => {
     clearInterval(ticker);
+    if (threads) threads.close();
     clearInterval(retry);
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();

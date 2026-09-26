@@ -62,21 +62,28 @@ const serveMcp = async (config) => {
 
   server.tool(
     'hub_read',
-    `Read the last messages of room "${room}": what the owner and other agents said, and directed messages.`,
+    `Read the last messages of room "${room}": what the owner and other agents said, and directed messages. Each line starts with the message's #id; pass it as replyTo to answer that message in its thread.`,
     { limit: z.number().int().min(1).max(200).optional().describe('How many, default 30') },
     async ({ limit }) => {
       const list = await hub.api.room.history({ room, limit: limit || 30 });
-      return text((await Promise.all(list.map(local))).join('\n') || '(empty)');
+      return text((await Promise.all(list.map(async (m) => `#${m.id.slice(0, 8)} ${await local(m)}`))).join('\n') || '(empty)');
     },
   );
+
+  // Threads: a command that replies to nothing starts a clean context in the agent that gets it;
+  // one that replies to a message carries on that message's conversation.
+  const replyTo = z
+    .string()
+    .optional()
+    .describe('The #id (from hub_read) of the message you answer. Keeps the thread: a command sent with it continues the conversation the receiver had there; without it, the receiver starts a clean context. Your answers to the command you are working on join its thread by themselves.');
 
   server.tool(
     'hub_say',
     'Post a short message to the room. Everyone in the room and the owner see it. Use it to report an outcome or a decision that affects others. Attach `files` to hand over a report, a log or a screenshot instead of pasting it.',
-    { text: z.string().min(1).max(16000), files },
-    async ({ text: body, files: paths }) => {
+    { text: z.string().min(1).max(16000), files, replyTo },
+    async ({ text: body, files: paths, replyTo: re }) => {
       const media = await attach(paths);
-      const msg = await hub.api.room.say({ room, text: body, media });
+      const msg = await hub.api.room.say({ room, text: body, media, replyTo: re });
       return text(`posted ${msg.id}${attached(media)}`);
     },
   );
@@ -84,10 +91,10 @@ const serveMcp = async (config) => {
   server.tool(
     'hub_send',
     'Send a directed message to another agent by name. kind "command" (default) is typed into its terminal as an instruction when it is idle, if that agent accepts commands from you (see hub_agents), otherwise it arrives as a note; kind "info" is a note or a reply. Works for humans too (the owner): send them a file with `files`. Use hub_wait_agent afterwards to know when it finished, and hub_read or hub_wait for its reply.',
-    { to: z.string(), text: z.string().min(1).max(16000), kind: z.enum(['info', 'command']).optional(), files },
-    async ({ to, text: body, kind, files: paths }) => {
+    { to: z.string(), text: z.string().min(1).max(16000), kind: z.enum(['info', 'command']).optional(), files, replyTo },
+    async ({ to, text: body, kind, files: paths, replyTo: re }) => {
       const media = await attach(paths);
-      const result = await hub.api.agents.send({ to, text: body, kind: kind || 'command', media });
+      const result = await hub.api.agents.send({ to, text: body, kind: kind || 'command', media, replyTo: re });
       const how = result.kind === 'command' ? 'as a command' : result.downgraded ? `as a note (${result.to} does not take commands from you)` : 'as a note';
       return text((result.delivered ? `delivered to ${result.to} ${how}` : `${result.to} is offline, queued ${how}`) + attached(media));
     },

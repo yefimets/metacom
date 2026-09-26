@@ -72,6 +72,16 @@ Directories:
 - **Control commands** from the owner act at once and are never typed as text: `!cancel` (Esc),
   `!keys enter|esc|up|down|y`, `!type text`, `!stop`. They are how you answer a blocked agent
   from the phone or from Jev.
+- **Threads are conversations.** Every message belongs to a thread: one that answers another
+  (↩ reply in the chat, ↩ on the phone, `replyTo` in `hub_say`/`hub_send`) joins its thread,
+  anything else starts one. A wrapped Claude Code keeps one conversation per thread: a plain
+  `@metadev …` gets a clean context (`/clear`), a reply to anything in an earlier thread takes
+  it back to that thread's conversation (`/resume <id>`) before the message is typed. An agent's
+  answers join the thread of the command it is working on, so replying to its answer carries
+  on. Claude reports the open session through a SessionStart hook the wrapper passes in
+  `--settings`; the thread → session map is kept in `~/.local/share/metacom-hub/sessions/`, and
+  a restarted agent resumes its last conversation. `MC_THREADS=0` turns it off;
+  `node cli/test/threads-e2e.js` proves it with a real Claude (three short turns).
 - **Server-owned waits.** `metacom send Alex "…" --wait` returns when the turn ends (or reports
   `stalled` when the agent never started working); `metacom wait Alex` blocks until it is ready.
 - **One log per room.** Every message, directed or not, plus system events (`Alex joined`,

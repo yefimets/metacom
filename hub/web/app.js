@@ -363,6 +363,21 @@ $('stream').addEventListener('scroll', () => {
 });
 $('unread').onclick = () => scroll.jump();
 
+// MARK: replies. ↩ on a message makes the next one answer it. An agent given a command that
+// answers a message goes back to the conversation it had in that thread; a plain @agent command
+// starts it a clean one. Answering an agent's message addresses that agent too.
+const setReply = (m) => {
+  state.replyTo = m;
+  const box = $('replying');
+  box.classList.toggle('hidden', !m);
+  if (!m) return;
+  box.querySelector('.what').textContent = `↩ ${m.from.name}: ${m.text.replace(/\s+/g, ' ').slice(0, 60)}`;
+  const who = m.from.name !== (state.me && state.me.name) ? m.from.name : m.to;
+  if (who && state.members.some((x) => x.kind === 'agent' && x.name === who)) setMention(who);
+  else $('text').focus();
+};
+$('replying').querySelector('.x').onclick = () => setReply(null);
+
 const renderMessage = (m) => {
   const stream = $('stream');
   const placeholder = stream.querySelector('.empty');
@@ -378,6 +393,11 @@ const renderMessage = (m) => {
   meta.append(document.createTextNode(`${m.ts.slice(11, 16)} `), el('span', 'from', m.from.name));
   if (m.to) meta.append(el('span', 'to', m.to));
   if (m.kind !== 'say' && m.kind !== 'command') meta.append(document.createTextNode(' '), el('span', 'kind', `[${m.kind}]`));
+  const re = el('button', 're', '↩');
+  re.type = 'button';
+  re.title = 'reply: an agent carries on this thread';
+  re.onclick = () => setReply(m);
+  meta.append(re);
   node.append(meta, document.createTextNode(m.text));
   if (Array.isArray(m.media) && m.media.length) node.append(renderMedia(m.media));
   stream.append(node);
@@ -578,10 +598,12 @@ $('composer').onsubmit = async (event) => {
   try {
     await withBusy(async () => {
       const media = await uploadAll();
-      if (target === 'room') await state.hub.call('room/say', { room: state.room, text, media });
-      else if (agent) await state.hub.call('agents/send', { to: agent.name, text, kind: 'command', media });
+      const replyTo = state.replyTo ? state.replyTo.id : undefined;
+      if (target === 'room') await state.hub.call('room/say', { room: state.room, text, media, replyTo });
+      else if (agent) await state.hub.call('agents/send', { to: agent.name, text, kind: 'command', media, replyTo });
       else await state.hub.call('agents/dispatch', { text, room: state.room, media });
     });
+    setReply(null);
     $('text').value = agent ? `@${agent.name} ` : '';
     clearFiles();
     autosize();
