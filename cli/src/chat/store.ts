@@ -192,6 +192,11 @@ export class Store {
     hub.api.agents.on("changed", ({ members }: { members: Member[] }) => this.onMembers(members));
     hub.api.agents.on("message", (m: Message) => {
       if (m.from && m.from.name !== name) this.onBell();
+      // one for me from another room lives in that room's log; say it here, so it is not missed
+      if (m.room && m.room !== this.state.room && m.from?.name !== name) {
+        const gist = m.text.replace(/\s+/g, " ").slice(0, 140);
+        this.note(`${m.from?.name ?? "?"} in ${m.room} → you: ${gist}${m.text.length > 140 ? "…" : ""} · /room ${m.room} to answer there`, "warn");
+      }
     });
     hub.m.on("close", () => this.setBusy("reconnecting…"));
     hub.m.on("open", () => this.setBusy(null));

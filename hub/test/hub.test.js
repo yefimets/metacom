@@ -41,6 +41,21 @@ test('hub: command typed into an idle agent, done badge after the turn, seen cle
   assert.strictEqual(hub.list(ownerConn)[0].attention, false);
 });
 
+test('hub: a message from an agent to a person stays in the agent\'s room, wherever the person is', async () => {
+  const { hub, ownerConn, agentConn } = setup();
+  const mishaClient = { events: [], source: '127.0.0.1', on() {}, emit(n, d) { this.events.push([n, d]); }, close() {} };
+  const misha = hub.bind(mishaClient, ownerConn.record, '127.0.0.1');
+  hub.register(misha, { name: 'misha', room: 'nal', kind: 'human' });
+  hub.join(misha, 'nal');
+  const r = await hub.send(agentConn, 'misha', 'fixed the logo', 'info');
+  assert.ok(hub.store.tailRoom('dev', 10).some((m) => m.id === r.id), 'in dev, where Alex works');
+  assert.ok(!hub.store.tailRoom('nal', 10).some((m) => m.id === r.id), 'not in nal, where misha happens to be');
+  assert.ok(mishaClient.events.some(([n, d]) => n === 'agents/message' && d.room === 'dev'), 'misha still gets it, with its room');
+  // and a command to an agent stays in the agent's room, as before
+  const c = await hub.send(misha, 'Alex', 'next task');
+  assert.ok(hub.store.tailRoom('dev', 10).some((m) => m.id === c.id));
+});
+
 test('hub: blocked agents refuse commands but take control commands', async () => {
   const { hub, ownerConn, agentConn } = setup();
   hub.setStatus(agentConn, 'blocked', 'screen: Do you want to proceed');

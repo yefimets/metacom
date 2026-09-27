@@ -348,11 +348,17 @@ class Hub {
     if (kind === 'command' && member.connected && member.status === 'blocked') {
       throw fail(409, `${member.name} is blocked on a question; answer it (metacom read/!keys) or send !cancel first`);
     }
-    const msg = { id: id(), ts: now(), room: member.room, kind, from: this.from(conn), to: member.name, text: body };
+    // A directed message lives where the agent is: one to an agent in the agent's room, one from
+    // an agent to a person in the agent's room too — not in whatever room that person has open,
+    // which would scatter a project's conversation over other rooms' logs.
+    const sender = conn.name ? this.members.get(conn.name) : null;
+    const senderRoom = sender && sender.room && ROOM.test(sender.room) ? sender.room : null;
+    const room = member.kind === 'agent' ? member.room : senderRoom || member.room;
+    const msg = { id: id(), ts: now(), room, kind, from: this.from(conn), to: member.name, text: body };
     if (files) msg.media = files;
     this.pushInbox(member.name, msg);
-    this.store.appendRoom(member.room, msg);
-    this.broadcast('room/message', msg, member.room);
+    this.store.appendRoom(room, msg);
+    this.broadcast('room/message', msg, room);
     const clients = this.byName.get(member.name) || new Set();
     for (const client of clients) this.emit(client, 'agents/message', msg);
     if (kind === 'command' && conn.record.role === 'owner') member.turnPending = true;
