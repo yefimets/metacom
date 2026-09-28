@@ -18,6 +18,9 @@ const KINDS = new Set(['agent', 'human']);
 const MAX_TEXT = 16 * 1024;
 const RATE_WINDOW = 10_000;
 const RATE_CALLS = 200;
+// A member that drops and is back within this long (a tunnel or laptop cutting the websocket
+// every few minutes) never "left": the room hears about a departure only once it lasts.
+const LEAVE_GRACE_MS = 120_000;
 
 const now = () => new Date().toISOString();
 
@@ -49,7 +52,9 @@ const text = (value, what = 'text', withMedia = false) => {
 /// `events` mirrors what goes to websocket clients ('room/message', 'agents/changed') plus
 /// 'agents/attention' when an agent starts needing a look; in-process connectors listen there.
 class Hub {
-  constructor({ dataDir, auth, console, router = {} }) {
+  constructor({ dataDir, auth, console, router = {}, leaveGraceMs = LEAVE_GRACE_MS }) {
+    this.leaveGraceMs = leaveGraceMs;
+    this.leaving = new Map(); // name -> timer of a "left" not said yet
     this.console = console;
     this.events = new EventEmitter();
     this.auth = auth;
@@ -95,7 +100,15 @@ class Hub {
       member.lastSeen = now();
       this.console.log(`hub: ${member.name} disconnected`);
       this.saveMembers();
-      this.system(member.room, `${member.name} left`);
+      const room = member.room;
+      clearTimeout(this.leaving.get(member.name));
+      this.leaving.set(
+        member.name,
+        setTimeout(() => {
+          this.leaving.delete(member.name);
+          this.system(room, `${member.name} left`);
+        }, this.leaveGraceMs).unref(),
+      );
       this.settle(member);
       this.changed();
     }
@@ -179,7 +192,13 @@ class Hub {
     this.byName.get(name).add(conn.client);
     this.console.log(`hub: ${name} (${kind}) joined room ${member.room} from ${conn.ip}`);
     this.saveMembers();
-    if (!wasConnected) this.system(member.room, `${name} joined${member.host ? ' from ' + member.host : ''}`);
+    // back within the grace: it never left, so there is nothing to say
+    const back = this.leaving.has(name);
+    if (back) {
+      clearTimeout(this.leaving.get(name));
+      this.leaving.delete(name);
+    }
+    if (!wasConnected && !back) this.system(member.room, `${name} joined${member.host ? ' from ' + member.host : ''}`);
     this.changed();
     return this.publicMember(member);
   }

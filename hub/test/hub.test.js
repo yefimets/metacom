@@ -56,6 +56,27 @@ test('hub: a message from an agent to a person stays in the agent\'s room, where
   assert.ok(hub.store.tailRoom('dev', 10).some((m) => m.id === c.id));
 });
 
+test('hub: a member back within the grace never left; one that stays away did', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-'));
+  const auth = new Auth(dir, quiet);
+  const hub = new Hub({ dataDir: dir, auth, console: quiet, leaveGraceMs: 60 });
+  const owner = auth.verify(fs.readFileSync(path.join(dir, 'bootstrap-token.txt'), 'utf8').trim());
+  const say = () => hub.store.tailRoom('opn', 50).filter((m) => m.kind === 'system').map((m) => m.text.replace(/ from .*/, ''));
+  const connectMisha = () => {
+    const client = fakeClient();
+    const conn = hub.bind(client, owner, '127.0.0.1');
+    hub.register(conn, { name: 'misha', room: 'opn', kind: 'human', host: 'mac' });
+    return client;
+  };
+  connectMisha().emit('close');
+  const again = connectMisha(); // back at once: the tunnel cut the websocket
+  await new Promise((r) => setTimeout(r, 120));
+  assert.deepStrictEqual(say(), ['misha joined'], 'no left/joined for a drop of a moment');
+  again.emit('close'); // and now gone for good
+  await new Promise((r) => setTimeout(r, 120));
+  assert.deepStrictEqual(say(), ['misha joined', 'misha left'], 'a real departure is still said');
+});
+
 test('hub: blocked agents refuse commands but take control commands', async () => {
   const { hub, ownerConn, agentConn } = setup();
   hub.setStatus(agentConn, 'blocked', 'screen: Do you want to proceed');
@@ -84,10 +105,12 @@ test('hub: system events, room rollups, and offline on disconnect', async () => 
   const { hub, ownerConn, agentConn, agentClient } = setup();
   hub.setStatus(agentConn, 'working', 'progress');
   assert.deepStrictEqual(hub.rooms().find((r) => r.room === 'dev'), { room: 'dev', agents: 1, online: 1, working: 1, blocked: 0, attention: 0 });
+  hub.leaveGraceMs = 30;
   agentClient.emit('close');
   const list = hub.list(ownerConn);
-  assert.strictEqual(list[0].connected, false);
+  assert.strictEqual(list[0].connected, false, 'offline at once');
   assert.strictEqual(list[0].status, 'stopped');
+  await new Promise((r) => setTimeout(r, 80)); // "left" is said once the grace is over
   const history = hub.history(ownerConn, 'dev', 10);
   assert.ok(history.some((m) => m.kind === 'system' && m.text.startsWith('Alex joined')));
   assert.ok(history.some((m) => m.kind === 'system' && m.text === 'Alex left'));

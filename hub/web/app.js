@@ -481,13 +481,51 @@ document.addEventListener('drop', (e) => {
   for (const f of e.dataTransfer.files) addFile(f);
 });
 
+const JOIN_LEFT = /^(\S+) (left|joined)(?: from .*)?$/;
+const foldReconnects = (list) => {
+  const drop = new Set();
+  const open = new Map();
+  for (const m of list) {
+    const hit = m.kind === 'system' && JOIN_LEFT.exec(m.text);
+    if (!hit) continue;
+    const left = open.get(hit[1]);
+    if (hit[2] === 'left') open.set(hit[1], m);
+    else if (left && Date.parse(m.ts) - Date.parse(left.ts) < 600000) {
+      drop.add(left.id);
+      drop.add(m.id);
+      open.delete(hit[1]);
+    }
+  }
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (run.length < 3) out.push(...run);
+    else {
+      const names = [...new Set(run.map((m) => JOIN_LEFT.exec(m.text)[1]))].join(', ');
+      out.push({ ...run[run.length - 1], text: `${names} came and went ${run.length}× · ${run[0].ts.slice(11, 16)}–${run[run.length - 1].ts.slice(11, 16)}` });
+    }
+    run = [];
+  };
+  for (const m of list) {
+    if (drop.has(m.id)) continue;
+    if (m.kind === 'system' && JOIN_LEFT.test(m.text)) run.push(m);
+    else {
+      flush();
+      out.push(m);
+    }
+  }
+  flush();
+  return out;
+};
+
 const loadRoom = async (room) => {
   state.room = room;
   store.set('hub.room', room);
   $('stream').replaceChildren(el('div', 'empty', 'no messages'));
   scroll.pinned = true;
   scroll.seen();
-  const history = await withBusy(() => state.hub.call('room/history', { room, limit: 100 }));
+  // a night of dropped connections leaves "X left / X joined" pairs; fold them, as the chat does
+  const history = foldReconnects(await withBusy(() => state.hub.call('room/history', { room, limit: 300 }))).slice(-100);
   for (const m of history) renderMessage(m);
   scroll.settle();
   renderAgents();

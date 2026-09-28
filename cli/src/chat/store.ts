@@ -109,6 +109,50 @@ export const stateOf = (m: Member): "online" | "working" | "offline" => {
   return m.status === "working" ? "working" : "online";
 };
 
+/// History without reconnect noise: an "X left" followed by "X joined" within ten minutes is a
+/// dropped connection, not a departure, and both lines go. Logs written before the hub waited
+/// out short drops are full of them.
+const JOIN_LEFT = /^(\S+) (left|joined)(?: from .*)?$/;
+export const foldReconnects = (list: Message[]): Message[] => {
+  const drop = new Set<string>();
+  const open = new Map<string, Message>(); // name -> its unanswered "left"
+  for (const m of list) {
+    if (m.kind !== "system") continue;
+    const hit = JOIN_LEFT.exec(m.text);
+    if (!hit) continue;
+    const [, who, what] = hit;
+    const left = open.get(who!);
+    if (what === "left") open.set(who!, m);
+    else if (left && Date.parse(m.ts) - Date.parse(left.ts) < 600_000) {
+      drop.add(left.id);
+      drop.add(m.id);
+      open.delete(who!);
+    }
+  }
+  // what is left of a night of drops comes in runs between real messages: one line per run
+  const out: Message[] = [];
+  let run: Message[] = [];
+  const hhmm = (m: Message) => m.ts.slice(11, 16);
+  const flush = () => {
+    if (run.length < 3) out.push(...run);
+    else {
+      const names = [...new Set(run.map((m) => JOIN_LEFT.exec(m.text)![1]))].join(", ");
+      out.push({ ...run[run.length - 1]!, text: `${names} came and went ${run.length}× · ${hhmm(run[0]!)}–${hhmm(run[run.length - 1]!)}` });
+    }
+    run = [];
+  };
+  for (const m of list) {
+    if (drop.has(m.id)) continue;
+    if (m.kind === "system" && JOIN_LEFT.test(m.text)) run.push(m);
+    else {
+      flush();
+      out.push(m);
+    }
+  }
+  flush();
+  return out;
+};
+
 let seq = 0;
 const id = () => `e${++seq}`;
 
@@ -207,7 +251,8 @@ export class Store {
   /// The room's recent history and its members, into an empty log.
   private async load(): Promise<void> {
     const hub = this.hub!;
-    const history: Message[] = await hub.api.room.history({ room: this.state.room, limit: 30 });
+    // more than is shown, so the last 30 are real messages and not a night of reconnects
+    const history: Message[] = foldReconnects(await hub.api.room.history({ room: this.state.room, limit: 300 })).slice(-30);
     this.onMembers(await hub.api.agents.list({}));
     for (const m of history) this.push({ type: "message", msg: m, grouped: this.group(m) });
     if (history.length) this.push({ type: "rule", text: "now" });
