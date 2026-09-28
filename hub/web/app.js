@@ -502,7 +502,7 @@ const computePopup = (text, caret) => {
   const at = /(^|\s)@([^\s]*)$/.exec(upto);
   if (at) {
     const q = at[2].toLowerCase();
-    const items = [...S.members.values(), { name: 'auto', kind: 'route' }]
+    const items = [...S.members.values()]
       .filter((m) => m.name !== S.me.name && m.name.toLowerCase().includes(q))
       .sort((a, b) => (a.connected === b.connected ? 0 : a.connected ? -1 : 1) || a.name.localeCompare(b.name))
       .map((m) => ({ label: m.name, member: m }));
