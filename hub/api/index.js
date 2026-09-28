@@ -51,10 +51,8 @@ const buildApi = ({ hub, auth, console, assistant }) => {
       join: method(async ({ room, ...rest } = {}, context) => hub.join(hub.identify(context, rest), room)),
       say: method(async ({ room, text, media, ...rest } = {}, context) => hub.say(hub.identify(context, rest), room, text, media)),
       history: method(async ({ room, limit, since, ...rest } = {}, context) => hub.history(hub.identify(context, rest), room, limit, since)),
-      list: method(async (args = {}, context) => {
-        hub.identify(context, args);
-        return hub.rooms();
-      }),
+      list: method(async (args = {}, context) => hub.rooms(hub.identify(context, args))),
+      read: method(async ({ room, ...rest } = {}, context) => hub.markRead(hub.identify(context, rest), room)),
     },
     assistant: {
       ask: method(async ({ token, ...args } = {}, context) => {

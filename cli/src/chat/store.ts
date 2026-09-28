@@ -45,7 +45,7 @@ export type Message = {
   text: string;
   media?: Media[];
 };
-export type RoomSummary = { room: string; agents: number; online: number; working: number; blocked: number; attention: number };
+export type RoomSummary = { room: string; agents: number; online: number; working: number; blocked: number; attention: number; unread?: number };
 export type Tone = "dim" | "ok" | "warn" | "error" | "plain";
 type Distribute<T> = T extends unknown ? Omit<T, "id"> : never;
 export type Entry =
@@ -251,6 +251,7 @@ export class Store {
     this.onMembers(await hub.api.agents.list({}));
     for (const m of history) this.push({ type: "message", msg: m, grouped: this.group(m) });
     if (history.length) this.push({ type: "rule", text: "now" });
+    this.markRead();
   }
 
   /// Every room on the hub, for the room list (← on an empty line).
@@ -307,10 +308,22 @@ export class Store {
     return grouped;
   }
 
+  /// The open room is read: messages to me here stop counting as unread in the room list. At
+  /// most once a second; an older hub without it is fine.
+  private readTimer: ReturnType<typeof setTimeout> | null = null;
+  private markRead(): void {
+    if (this.readTimer) return;
+    this.readTimer = setTimeout(() => {
+      this.readTimer = null;
+      this.hub?.api.room.read?.({ room: this.state.room }).catch(() => {});
+    }, 1000);
+  }
+
   private onMessage(m: Message): void {
     const { room, me } = this.state;
     if (m.room && m.room !== room) return;
     this.push({ type: "message", msg: m, grouped: this.group(m) });
+    if (m.to === me.name) this.markRead();
     if (m.from && m.from.name !== me.name && m.kind === "say" && new RegExp(`@${me.name}\\b`, "i").test(m.text)) this.onBell();
   }
 

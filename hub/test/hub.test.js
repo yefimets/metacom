@@ -77,6 +77,26 @@ test('hub: a member back within the grace never left; one that stays away did', 
   assert.deepStrictEqual(say(), ['misha joined', 'misha left'], 'a real departure is still said');
 });
 
+test('hub: unread counts messages to you, not the room\'s, until you open the room', async () => {
+  const { hub, ownerConn, agentConn } = setup();
+  const client = fakeClient();
+  const misha = hub.bind(client, ownerConn.record, '127.0.0.1');
+  hub.register(misha, { name: 'misha', room: 'nal', kind: 'human' });
+  hub.join(misha, 'nal');
+  hub.markRead(misha, 'dev');
+  await new Promise((r) => setTimeout(r, 5));
+  await hub.send(agentConn, 'misha', 'your report is ready', 'info');
+  await hub.send(agentConn, 'misha', 'and the logo', 'info');
+  hub.say(agentConn, 'dev', 'general news, for everyone');
+  const unread = (room) => hub.rooms(misha).find((r) => r.room === room).unread;
+  assert.strictEqual(unread('dev'), 2, 'the two directed to misha, not the general one');
+  assert.strictEqual(unread('nal'), 0);
+  await new Promise((r) => setTimeout(r, 5));
+  hub.markRead(misha, 'dev');
+  assert.strictEqual(unread('dev'), 0, 'opening the room reads them');
+  assert.strictEqual(hub.rooms().find((r) => r.room === 'dev').unread, 0, 'no caller, no count');
+});
+
 test('hub: blocked agents refuse commands but take control commands', async () => {
   const { hub, ownerConn, agentConn } = setup();
   hub.setStatus(agentConn, 'blocked', 'screen: Do you want to proceed');
@@ -104,7 +124,7 @@ test('hub: wait resolves on a status change, and send --wait observes a turn', a
 test('hub: system events, room rollups, and offline on disconnect', async () => {
   const { hub, ownerConn, agentConn, agentClient } = setup();
   hub.setStatus(agentConn, 'working', 'progress');
-  assert.deepStrictEqual(hub.rooms().find((r) => r.room === 'dev'), { room: 'dev', agents: 1, online: 1, working: 1, blocked: 0, attention: 0 });
+  assert.deepStrictEqual(hub.rooms().find((r) => r.room === 'dev'), { room: 'dev', agents: 1, online: 1, working: 1, blocked: 0, attention: 0, unread: 0 });
   hub.leaveGraceMs = 30;
   agentClient.emit('close');
   const list = hub.list(ownerConn);
@@ -152,7 +172,7 @@ test('hub: rooms are safe file names, and a room is listed once a human or a log
   assert.throws(() => hub.say(ownerConn, '../etc', 'hi'), (e) => e.code === 400);
   assert.strictEqual(hub.members.get('misha'), undefined);
   hub.register(ownerConn, { name: 'misha', kind: 'human', room: 'plans' });
-  assert.deepStrictEqual(hub.rooms().find((r) => r.room === 'plans'), { room: 'plans', agents: 0, online: 0, working: 0, blocked: 0, attention: 0 });
+  assert.deepStrictEqual(hub.rooms().find((r) => r.room === 'plans'), { room: 'plans', agents: 0, online: 0, working: 0, blocked: 0, attention: 0, unread: 0 });
   hub.say(ownerConn, 'notes', 'kept');
   assert.ok(hub.rooms().some((r) => r.room === 'notes'));
 });

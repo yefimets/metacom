@@ -63,10 +63,9 @@ export const RoomPicker = ({ rooms, filter, index, current, height }: { rooms: R
             <Text color={active ? theme.colors.primary : theme.colors.foreground} bold={active}>
               {padToTerminalWidth(item.room, nameW)}
             </Text>
-            <Text color={muted}>
-              {counts(item.summary)}
-              {item.room === current ? "  · you are here" : ""}
-            </Text>
+            <Text color={muted}>{counts(item.summary)}</Text>
+            {item.summary?.unread ? <Text color={theme.colors.warning} bold>{` · ${item.summary.unread} unread`}</Text> : null}
+            <Text color={muted}>{item.room === current ? "  · you are here" : ""}</Text>
           </Text>
         );
       })}

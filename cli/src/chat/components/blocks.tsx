@@ -95,6 +95,7 @@ export const Rooms = ({ rooms, current }: { rooms: RoomSummary[]; current: strin
           <Text color={theme.colors.mutedForeground}>
             {r.online}/{r.agents} online · {r.working} working · {r.blocked} blocked · {r.attention} done
           </Text>
+          {r.unread ? <Text color={theme.colors.warning} bold>{` · ${r.unread} unread`}</Text> : null}
         </Box>
       ))}
     </Box>

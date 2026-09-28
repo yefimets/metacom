@@ -66,6 +66,10 @@ class Hub {
       this.members.set(m.name, { ...m, connected: false, status: 'stopped' });
     }
     this.inbox = new Map(Object.entries(this.store.loadJson('inbox.json', {})));
+    // When each person last had each room open: messages to them after that are unread. Rooms
+    // never opened since this was kept count from `since`, not from the start of their logs.
+    this.readMarks = this.store.loadJson('reads.json', null) || { since: now(), marks: {} };
+    if (!this.store.loadJson('reads.json', null)) this.store.saveJson('reads.json', this.readMarks);
     this.conns = new Map();
     this.byName = new Map();
     this.waiters = new Map();
@@ -456,9 +460,34 @@ class Hub {
     return this.store.tailRoom(target, Math.min(Number(limit) || 50, 500), since);
   }
 
-  /// Rooms with herdr-style rollups: how many agents are working, blocked, or done unseen.
-  rooms() {
-    const empty = (room) => ({ room, agents: 0, online: 0, working: 0, blocked: 0, attention: 0 });
+  // MARK: unread
+
+  reader(conn) {
+    return conn.name || conn.record.name;
+  }
+
+  /// The caller has the room open: everything in it so far is read.
+  markRead(conn, room) {
+    room = String(room || '');
+    if (!ROOM.test(room)) throw fail(400, 'room is required');
+    const who = this.reader(conn);
+    const marks = this.readMarks.marks[who] || (this.readMarks.marks[who] = {});
+    marks[room] = now();
+    this.store.saveJson('reads.json', this.readMarks);
+    return { room, read: marks[room] };
+  }
+
+  /// Messages in the room addressed to the caller by someone else, after they last had it open.
+  unread(conn, room) {
+    const who = this.reader(conn);
+    const since = (this.readMarks.marks[who] || {})[room] || this.readMarks.since;
+    return this.store.tailRoom(room, 1000, since).filter((m) => m.to === who && m.from && m.from.name !== who).length;
+  }
+
+  /// Rooms with herdr-style rollups: how many agents are working, blocked, or done unseen, and
+  /// for the caller, how many messages to them there they have not read.
+  rooms(conn = null) {
+    const empty = (room) => ({ room, agents: 0, online: 0, working: 0, blocked: 0, attention: 0, unread: 0 });
     // every room with a log or a member, so one a human just opened is listed before anyone speaks
     const summary = new Map(['default', ...this.store.rooms()].map((room) => [room, empty(room)]));
     for (const m of this.members.values()) {
@@ -473,6 +502,7 @@ class Hub {
       if (m.attention) s.attention++;
       summary.set(m.room, s);
     }
+    if (conn) for (const s of summary.values()) s.unread = this.unread(conn, s.room);
     return [...summary.values()].sort((a, b) => a.room.localeCompare(b.room));
   }
 
