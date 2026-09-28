@@ -1070,6 +1070,16 @@ const App = () => {
 };
 
 render(html`<${App} />`, document.getElementById('app'));
+// ← anywhere on the page, when no field is being typed in, opens the room list, as ← on an
+// empty input does
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable)) return;
+  if (!S.signedIn || S.picker) return;
+  e.preventDefault();
+  openPicker();
+});
 // back and forward between rooms
 window.addEventListener('popstate', () => {
   const room = pathRoom();
