@@ -580,7 +580,20 @@ const Composer = () => {
     }
     t.style.height = 'auto';
     t.style.height = t.scrollHeight + 'px';
+    placeCursor();
   });
+  // the block cursor follows the caret wherever it goes: typing, clicks, arrows, selection
+  useEffect(() => {
+    const t = ref.current;
+    const moved = () => placeCursor(true);
+    document.addEventListener('selectionchange', moved);
+    for (const ev of ['focus', 'blur', 'scroll', 'keyup']) t.addEventListener(ev, moved);
+    window.addEventListener('resize', moved);
+    return () => {
+      document.removeEventListener('selectionchange', moved);
+      window.removeEventListener('resize', moved);
+    };
+  }, []);
   // a phone has the rooms link under the input and little width: the short form
   const narrow = window.innerWidth < 640;
   const placeholder = s.picker ? 'filter or new room · ↑↓ enter · esc back' : narrow ? `message ${s.room} · @ agents · / commands` : `message ${s.room} · @ for agents · / for commands · ← rooms`;
@@ -594,7 +607,42 @@ const Composer = () => {
     <span class="prompt">❯</span>
     <textarea id="text" ref=${ref} rows="1" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder=${placeholder} value=${s.text}
       onInput=${(e) => onText(e.target.value, e.target.selectionStart)} onClick=${(e) => onText(e.target.value, e.target.selectionStart)} onKeyDown=${onKey} onPaste=${onPaste}></textarea>
+    <div id="mirror" aria-hidden="true"></div>
+    <div id="cursor" aria-hidden="true"></div>
   </div>`;
+};
+
+/// The terminal's block cursor over the textarea: a copy of the text up to the caret, laid out
+/// in an invisible box of the same width and font, says where the caret is; the block goes
+/// there. Solid for a moment after it moves, then it blinks, as a terminal's does.
+let restTimer = null;
+const placeCursor = (moved = false) => {
+  const t = document.getElementById('text');
+  const mirror = document.getElementById('mirror');
+  const cursor = document.getElementById('cursor');
+  if (!t || !mirror || !cursor) return;
+  if (document.activeElement !== t || t.selectionStart !== t.selectionEnd) {
+    cursor.classList.remove('on');
+    return;
+  }
+  const at = t.selectionStart;
+  mirror.style.width = t.clientWidth + 'px';
+  mirror.style.left = t.offsetLeft + 'px';
+  mirror.style.top = t.offsetTop + 'px';
+  mirror.textContent = t.value.slice(0, at);
+  const mark = document.createElement('span');
+  // the character under the cursor, or a space at the end: the block is as wide as it
+  mark.textContent = t.value.slice(at, at + 1).replace('\n', ' ') || ' ';
+  mirror.append(mark);
+  cursor.style.left = t.offsetLeft + mark.offsetLeft + 'px';
+  cursor.style.top = t.offsetTop + mark.offsetTop - t.scrollTop + 'px';
+  cursor.style.width = Math.max(mark.offsetWidth, 1) + 'px';
+  cursor.classList.add('on');
+  if (moved || !cursor.classList.contains('rest')) {
+    cursor.classList.remove('rest');
+    clearTimeout(restTimer);
+    restTimer = setTimeout(() => cursor.classList.add('rest'), 500);
+  }
 };
 
 const onKey = (e) => {
