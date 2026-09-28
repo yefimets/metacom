@@ -7,6 +7,7 @@ const { ROOM, Store } = require('./store.js');
 const { Media } = require('./media.js');
 const { route } = require('./router.js');
 const { fail } = require('./errors.js');
+const colors = require('./colors.js');
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
 const STATUSES = new Set(['starting', 'working', 'waiting', 'blocked', 'stopped']);
@@ -65,6 +66,8 @@ class Hub {
     for (const m of this.store.loadJson('members.json', [])) {
       this.members.set(m.name, { ...m, connected: false, status: 'stopped' });
     }
+    // everyone gets a colour of their own once, and keeps it
+    if (colors.assignAll(this.members.values())) this.saveMembers();
     this.inbox = new Map(Object.entries(this.store.loadJson('inbox.json', {})));
     // When each person last had each room open: messages to them after that are unread. Rooms
     // never opened since this was kept count from `since`, not from the start of their logs.
@@ -178,6 +181,13 @@ class Hub {
     member.kind = kind;
     if (info.room !== undefined) member.room = String(info.room);
     if (!member.room) member.room = 'default';
+    // a new name gets a colour nobody it can meet has; one that moved into a room where its
+    // colour is taken gets another
+    const color = colors.pick(member, [...this.members.values()]);
+    if (color !== member.color) {
+      member.color = color;
+      this.saveMembers();
+    }
     if (info.repo !== undefined) member.repo = info.repo ? String(info.repo).slice(0, 512) : null;
     if (Array.isArray(info.caps)) member.caps = info.caps.map((c) => String(c).slice(0, 32)).slice(0, 32);
     if (info.host !== undefined) member.host = String(info.host).slice(0, 128);
@@ -320,13 +330,13 @@ class Hub {
   }
 
   publicMember(m) {
-    const { name, kind, room, repo, caps = [], host, command, status, connected, since, lastSeen, attention, reason, accept } = m;
-    return { name, kind, room, repo, caps, host, command, status, connected: Boolean(connected), since, lastSeen, attention: Boolean(attention), reason: reason || null, accept: kind === 'agent' ? accept || 'owner' : undefined };
+    const { name, kind, room, repo, caps = [], host, command, status, connected, since, lastSeen, attention, reason, accept, color } = m;
+    return { name, kind, room, repo, caps, host, command, status, connected: Boolean(connected), since, lastSeen, attention: Boolean(attention), reason: reason || null, accept: kind === 'agent' ? accept || 'owner' : undefined, color };
   }
 
   saveMembers() {
-    const list = [...this.members.values()].map(({ name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen }) => ({
-      name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen,
+    const list = [...this.members.values()].map(({ name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen, color }) => ({
+      name, kind, tokenId, room, repo, caps, host, command, accept, since, lastSeen, color,
     }));
     this.store.saveJson('members.json', list);
   }

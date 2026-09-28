@@ -1,5 +1,6 @@
 import os from "node:os";
 import { createRequire } from "node:module";
+import { setColors } from "@/chat/palette";
 
 const require = createRequire(import.meta.url);
 const { connect } = require("../../lib/client.js") as { connect: (o: object) => Promise<Hub> };
@@ -34,6 +35,7 @@ export type Member = {
   attention: boolean;
   reason: string | null;
   lastSeen?: string; // when the server last heard from it: the status line puts the freshest first
+  color?: number; // the hub's colour for the name, an index into the chat's palette
 };
 export type Message = {
   id: string;
@@ -328,6 +330,7 @@ export class Store {
   }
 
   private onMembers(list: Member[]): void {
+    setColors(list);
     const { room } = this.state;
     const members = new Map<string, Member>();
     for (const m of list) if (m.room === room) members.set(m.name, m);
