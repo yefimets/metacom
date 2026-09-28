@@ -15,6 +15,9 @@ const TYPES = {
   '.woff2': 'font/woff2',
 };
 
+// a room name as the hub takes it, as the whole path: /opn, /dev
+const ROOM_PATH = /^\/[\w][\w.-]{0,63}$/;
+
 const SECURITY = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
@@ -50,12 +53,23 @@ const serveWeb = (httpServer, dir) => {
       return;
     }
     const rel = pathname === '/' ? 'index.html' : pathname.endsWith('/') ? pathname.slice(1) + 'index.html' : pathname.slice(1);
-    const file = path.resolve(dir, rel);
+    let file = path.resolve(dir, rel);
     if (!file.startsWith(path.resolve(dir) + path.sep) && file !== path.resolve(dir, 'index.html')) {
       res.writeHead(403, SECURITY).end();
       return;
     }
     fs.readFile(file, (error, data) => {
+      // /opn, /dev: a room's own address is the page, which opens that room
+      // (a missing file keeps its 404: a room is never named like app.js or logo.png)
+      const asset = TYPES[path.extname(pathname).toLowerCase()] || /\.(ico|map|txt|jpe?g|gif|webp|woff|ttf)$/i.test(pathname);
+      if (error && ROOM_PATH.test(pathname) && !asset) {
+        file = path.resolve(dir, 'index.html');
+        return fs.readFile(file, (e2, page) => {
+          if (e2) return void res.writeHead(404, SECURITY).end();
+          res.writeHead(200, { ...SECURITY, 'Content-Type': TYPES['.html'], 'Content-Length': page.length });
+          res.end(req.method === 'HEAD' ? undefined : page);
+        });
+      }
       if (error) {
         res.writeHead(404, SECURITY).end();
         return;

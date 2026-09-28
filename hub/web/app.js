@@ -101,12 +101,26 @@ const saved = {
   },
 };
 
+// A room has an address of its own, /opn or /dev: open one by its link, go back and forth
+// between rooms with the browser's back and forward.
+const ROOM_RE = /^[\w][\w.-]{0,63}$/;
+function pathRoom() {
+  const p = decodeURIComponent(location.pathname.slice(1));
+  return ROOM_RE.test(p) ? p : null;
+}
+const showRoom = (room, replace = false) => {
+  if (pathRoom() === room) return;
+  history[replace ? 'replaceState' : 'pushState']({ room }, '', '/' + encodeURIComponent(room));
+};
+
 const S = {
   hub: null,
   signedIn: false,
   loginError: '',
   me: { name: '', role: '?' },
-  room: saved.get('tui.room') || 'dev',
+  // the room in the address (/opn) wins; else the last one open on this device
+  room: pathRoom() || saved.get('tui.room') || 'dev',
+  draft: '', // what was being typed before ↑ went into what was sent
   all: [], // every member, every room
   members: new Map(), // this room's
   log: [], // what the conversation shows
@@ -604,7 +618,7 @@ const Composer = () => {
     for (const it of items) attach(it.getAsFile());
   };
   return html`<div id="composer">
-    <span class="prompt">❯</span>
+    <span class="prompt" style=${{ color: nameColor(s.me.name) }}>❯</span>
     <textarea id="text" ref=${ref} rows="1" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder=${placeholder} value=${s.text}
       onInput=${(e) => onText(e.target.value, e.target.selectionStart)} onClick=${(e) => onText(e.target.value, e.target.selectionStart)} onKeyDown=${onKey} onPaste=${onPaste}></textarea>
     <div id="mirror" aria-hidden="true"></div>
@@ -672,13 +686,15 @@ const onKey = (e) => {
     e.preventDefault();
     return openPicker();
   }
-  // ↑ on the first line walks back through what you sent
+  // ↑ on the first line walks back through what you sent, ↓ forward again; past the newest
+  // comes back what you were typing before you went, as the terminal chat's editor does
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !t.value.slice(0, t.selectionStart).includes('\n') && S.history.length) {
     if (e.key === 'ArrowDown' && S.historyAt < 0) return;
     e.preventDefault();
+    if (e.key === 'ArrowUp' && S.historyAt < 0) S.draft = t.value;
     const at = e.key === 'ArrowUp' ? Math.min(S.history.length - 1, S.historyAt + 1) : S.historyAt - 1;
     set({ historyAt: at });
-    return setText(at < 0 ? '' : S.history[S.history.length - 1 - at]);
+    return setText(at < 0 ? S.draft || '' : S.history[S.history.length - 1 - at]);
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
     e.preventDefault();
@@ -960,11 +976,12 @@ const pickerKey = (e) => {
   }
 };
 
-const switchRoom = async (room) => {
+const switchRoom = async (room, { fromHistory = false } = {}) => {
   if (room === S.room) return;
   if (!ROOM.test(room)) return note('a room name is letters, digits, dot, dash or underscore', 'warn');
   set({ room });
   saved.set('tui.room', room);
+  if (!fromHistory) showRoom(room);
   await join();
   members(S.all);
   await load();
@@ -1027,6 +1044,7 @@ const signIn = async (token, name) => {
     saved.set('tui.token', token);
     saved.set('tui.name', name);
     set({ signedIn: true });
+    showRoom(S.room, true);
     focusInput();
   } catch (error) {
     hub.token = null;
@@ -1052,6 +1070,14 @@ const App = () => {
 };
 
 render(html`<${App} />`, document.getElementById('app'));
+// back and forward between rooms
+window.addEventListener('popstate', () => {
+  const room = pathRoom();
+  if (room && S.signedIn && room !== S.room) {
+    if (S.picker) closePicker();
+    switchRoom(room, { fromHistory: true });
+  }
+});
 if (saved.get('tui.token') && saved.get('tui.name')) signIn(saved.get('tui.token'), saved.get('tui.name'));
 
 // Phones: the on-screen keyboard shrinks the visual viewport, not the layout one (iOS), so the

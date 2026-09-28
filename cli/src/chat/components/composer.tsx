@@ -5,6 +5,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useUnicode } from "@/hooks/use-unicode";
 import { resolveBorderStyle } from "@/lib/terminal-style";
 import { splitGraphemes, terminalWidth } from "@/lib/terminal-text";
+import { nameColor } from "@/chat/palette";
 
 /// A row of the input with attachment tokens such as `[image 2.png]` in the accent colour.
 /// A token cut by the wrap is shown plain on both rows.
@@ -71,7 +72,7 @@ export const layout = (text: string, cursor: number, width: number): Layout => {
 /// The input box: a rounded frame in the theme's border colour, a `❯` prompt, character-wrapped
 /// lines, a window of INPUT_ROWS rows that follows the cursor, and the real terminal cursor.
 /// `tokens` are the attachment placeholders in the text, drawn in the accent colour.
-export const Composer = ({ text, cursor, width, placeholder, tokens = [], origin }: { text: string; cursor: number; width: number; placeholder: string; tokens?: string[]; origin?: { left: number; top: number } }) => {
+export const Composer = ({ text, cursor, width, placeholder, tokens = [], origin, me }: { text: string; cursor: number; width: number; placeholder: string; tokens?: string[]; origin?: { left: number; top: number }; me?: string }) => {
   const theme = useTheme();
   const unicode = useUnicode();
   const ref = useRef(null);
@@ -102,7 +103,8 @@ export const Composer = ({ text, cursor, width, placeholder, tokens = [], origin
       )}
       {shown.map((row, i) => (
         <Box key={top + i} flexDirection="row">
-          <Text color={theme.colors.primary} bold>
+          {/* the prompt in your own name's colour: this is you speaking */}
+          <Text color={me ? nameColor(me) : theme.colors.primary} bold>
             {top + i === 0 ? "❯ " : "  "}
           </Text>
           {text === "" && i === 0 ? (
