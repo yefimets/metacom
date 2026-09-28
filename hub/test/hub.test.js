@@ -77,6 +77,14 @@ test('hub: a member back within the grace never left; one that stays away did', 
   assert.deepStrictEqual(say(), ['misha joined', 'misha left'], 'a real departure is still said');
 });
 
+test('hub: !/command is the owner\'s slash command, a control no agent may send', async () => {
+  const { hub, ownerConn, agentConn, agentClient } = setup();
+  const r = await hub.send(ownerConn, 'Alex', '!/loop 1h catch up with the team');
+  assert.strictEqual(r.kind, 'control');
+  assert.ok(agentClient.events.some(([n, d]) => n === 'agents/message' && d.kind === 'control' && d.text === '!/loop 1h catch up with the team'));
+  await assert.rejects(hub.send(agentConn, 'Alex', '!/clear'), (e) => e.code === 403);
+});
+
 test('hub: blocked agents refuse commands but take control commands', async () => {
   const { hub, ownerConn, agentConn } = setup();
   hub.setStatus(agentConn, 'blocked', 'screen: Do you want to proceed');

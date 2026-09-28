@@ -96,7 +96,7 @@ export const COMMANDS = [
   { name: "quit", args: "", help: "leave the chat" },
 ] as const;
 
-export const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
+export const CONTROL = /^!(?:(?:cancel|esc|stop|keys|type)\b|\/)/;
 /// What the hub takes as a room name.
 export const ROOM = /^[\w][\w.-]{0,63}$/;
 
@@ -426,7 +426,7 @@ export class Store {
       if (t.startsWith("/")) await this.command(t);
       else if (this.mentioned(t)) await this.directed(t);
       else if (t.startsWith(">")) await this.dispatch(t.slice(1).trim());
-      else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel", "warn");
+      else if (CONTROL.test(t)) this.note("control commands go to an agent, e.g. @Alex !cancel or @Alex !/compact", "warn");
       else await this.hub!.api.room.say({ room: this.state.room, text: t, media: await this.uploadAll(t) });
       this.prune();
       return true;

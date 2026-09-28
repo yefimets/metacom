@@ -11,7 +11,9 @@ const { fail } = require('./errors.js');
 const NAME = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
 const STATUSES = new Set(['starting', 'working', 'waiting', 'blocked', 'stopped']);
 const READY = new Set(['waiting', 'blocked', 'stopped']);
-const CONTROL = /^!(cancel|esc|stop|keys|type)\b/;
+// Owner-only input the harness acts on itself: keys and dialogs, and `!/command …`, a slash
+// command typed into the agent as if at its own terminal.
+const CONTROL = /^!(?:(?:cancel|esc|stop|keys|type)\b|\/)/;
 const READ_TIMEOUT = 5_000;
 const TURN_START_TIMEOUT = 10_000;
 const KINDS = new Set(['agent', 'human']);

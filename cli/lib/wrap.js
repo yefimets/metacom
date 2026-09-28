@@ -265,7 +265,15 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     if (seen.has(msg.id)) return;
     seen.add(msg.id);
     trace(`take ${msg.kind} from ${msg.from.name}: ${msg.text.slice(0, 60)}`);
-    if (msg.kind === 'control' && msg.from.role === 'owner') return control(msg);
+    if (msg.kind === 'control' && msg.from.role === 'owner') {
+      // `!/loop 1h …`: the owner's own slash command. It waits for the agent to be idle like any
+      // command, then goes in as typed — no [hub …] prefix, which would make it plain text.
+      if (msg.text.startsWith('!/')) {
+        queue.push({ ...msg, raw: msg.text.slice(1).trim() });
+        return flush();
+      }
+      return control(msg);
+    }
     if (msg.kind === 'command' && !accepted(msg)) msg = { ...msg, kind: 'info' };
     if (msg.kind !== 'command' && msg.kind !== 'info') return ack(msg);
     queue.push({ ...msg, text: await withFiles(msg) });
@@ -287,9 +295,10 @@ const wrap = async ({ name, room, repo, caps, accept, command, args, config, mcp
     }
     flushing = true;
     const msg = queue.shift();
-    const text = `[hub ${msg.from.name}${msg.kind === 'info' ? ' (info)' : ''}] ${msg.text}`;
-    trace(`type ${msg.id.slice(0, 8)} (status ${status}, ${Date.now() - lastOutput}ms quiet)`);
-    term.write(PASTE_START + text + PASTE_END);
+    const text = msg.raw ?? `[hub ${msg.from.name}${msg.kind === 'info' ? ' (info)' : ''}] ${msg.text}`;
+    trace(`type ${msg.id.slice(0, 8)}${msg.raw ? ' raw' : ''} (status ${status}, ${Date.now() - lastOutput}ms quiet)`);
+    // a slash command is typed, not pasted: a pasted "/" line is text to the harness
+    term.write(msg.raw ? text : PASTE_START + text + PASTE_END);
     setTimeout(() => {
       term.write('\r');
       trace(`enter ${msg.id.slice(0, 8)}`);

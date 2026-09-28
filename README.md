@@ -71,7 +71,10 @@ Directories:
   `hub_wait_agent`, and reads the reply.
 - **Control commands** from the owner act at once and are never typed as text: `!cancel` (Esc),
   `!keys enter|esc|up|down|y`, `!type text`, `!stop`. They are how you answer a blocked agent
-  from the phone or from Jev.
+  from the phone or from Jev. `!/command …` is your own slash command in the agent:
+  `@metadev !/loop 1h catch up with the team` waits until metadev is idle, then goes in exactly
+  as if typed at its terminal — no `[hub misha]` prefix — and runs (`!/compact`, `!/clear`,
+  `!/model …`, skills). Owner only, like the rest.
 - **Server-owned waits.** `metacom send Alex "…" --wait` returns when the turn ends (or reports
   `stalled` when the agent never started working); `metacom wait Alex` blocks until it is ready.
 - **One log per room.** Every message, directed or not, plus system events (`Alex joined`,
