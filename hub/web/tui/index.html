@@ -46,6 +46,9 @@
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.45 var(--mono); font-variant-ligatures: none;
+    /* light on dark, smoothed in grey as Ghostty and iOS do: Chrome and Firefox on a Mac draw
+       it heavier and rougher unless asked */
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility;
     position: fixed; top: 0; left: 0; width: 100%; height: var(--vh, 100dvh);
     transform: translateY(var(--vv-top, 0px));
     display: flex; flex-direction: column; overflow: hidden;
