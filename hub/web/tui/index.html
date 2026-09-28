@@ -43,7 +43,9 @@
     display: flex; flex-direction: column; overflow: hidden;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
-  @media (max-width: 640px) { body { font-size: 13px; --gutter: 1ch; } }
+  /* a phone: one smaller size for everything, the input included (maximum-scale=1 keeps iOS
+     from zooming in on a field under 16px) */
+  @media (max-width: 640px) { body { font-size: 12px; --gutter: 1ch; } }
   body.keyboard { padding-bottom: 0; }
   ::selection { background: var(--primary); color: #fff; }
   button, textarea, input { font: inherit; color: inherit; background: none; border: 0; outline: 0; margin: 0; padding: 0; }
@@ -112,7 +114,6 @@
   #composer .prompt { color: var(--primary); font-weight: 700; flex: 0 0 2ch; line-height: 1.45; }
   #text { flex: 1; resize: none; min-height: 1.45em; max-height: calc(6 * 1.45em); line-height: 1.45; overflow-y: auto; caret-color: var(--fg); }
   #text::placeholder { color: var(--muted); opacity: 1; }
-  @media (pointer: coarse) { #text { font-size: 16px; } }
 
   /* the hint under it, and on a phone the rooms button */
   #footer { display: flex; align-items: center; gap: 2ch; padding: 0.15em 1ch 0.15em calc(var(--gutter) + 2ch); min-height: 1.45em; }

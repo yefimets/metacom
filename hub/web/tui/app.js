@@ -581,7 +581,9 @@ const Composer = () => {
     t.style.height = 'auto';
     t.style.height = t.scrollHeight + 'px';
   });
-  const placeholder = s.picker ? 'filter or new room · ↑↓ enter · esc back' : `message ${s.room} · @ for agents · / for commands · ← rooms`;
+  // a phone has the rooms link under the input and little width: the short form
+  const narrow = window.innerWidth < 640;
+  const placeholder = s.picker ? 'filter or new room · ↑↓ enter · esc back' : narrow ? `message ${s.room} · @ agents · / commands` : `message ${s.room} · @ for agents · / for commands · ← rooms`;
   const onPaste = (e) => {
     const items = [...(e.clipboardData ? e.clipboardData.items : [])].filter((it) => it.kind === 'file');
     if (!items.length) return;
