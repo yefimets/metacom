@@ -56,6 +56,7 @@
   .error { color: var(--error); }
 
   /* the conversation, bottom-pinned like the terminal's scrollback */
+  #app { display: contents; }
   #feed { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 1ch 0 var(--gutter); display: flex; flex-direction: column; }
   #feed > .spacer { flex: 1; }
   .entry { white-space: pre-wrap; word-break: break-word; }
@@ -130,21 +131,8 @@
 </style>
 </head>
 <body>
-<div id="feed"><div class="spacer"></div></div>
-<div id="rooms"></div>
-<div id="status"><span class="who"></span><span class="me"></span></div>
-<div id="popup"></div>
-<div id="composer"><span class="prompt">❯</span><textarea id="text" rows="1" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></div>
-<div id="footer"><span id="hint" class="muted"></span><button id="roomsBtn" type="button">← rooms</button></div>
-<input id="fileInput" type="file" multiple hidden>
-
-<div id="login">
-  <div><span class="b primary">metacom</span><span class="muted"> · sign in</span></div>
-  <label class="field"><span class="prompt">❯</span><input id="token" type="password" placeholder="token" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-  <label class="field"><span class="prompt">❯</span><input id="name" placeholder="your name, e.g. misha" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-  <button id="loginBtn" class="go" type="button">connect ⏎</button>
-  <div id="loginError"></div>
-</div>
+<div id="app"></div>
+<script src="vendor/htm-preact.umd.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
