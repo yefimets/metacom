@@ -456,8 +456,8 @@ const Footer = () => {
   const s = useStore();
   const [cls, hint] = hintOf(s);
   return html`<div id="footer">
-    <span id="hint" class=${cls}>${hint}</span>
     <button id="roomsBtn" type="button" onMouseDown=${(e) => e.preventDefault()} onClick=${() => (S.picker ? closePicker() : openPicker())}>${s.picker ? '× close' : '← rooms'}</button>
+    <span id="hint" class=${cls}>${hint}</span>
   </div>`;
 };
 
@@ -1004,15 +1004,23 @@ const App = () => {
 render(html`<${App} />`, document.getElementById('app'));
 if (saved.get('tui.token') && saved.get('tui.name')) signIn(saved.get('tui.token'), saved.get('tui.name'));
 
-// iOS: the on-screen keyboard shrinks the visual viewport, not the layout one; keep the page
-// on the visual viewport so the input stays above the keyboard.
+// Phones: the on-screen keyboard shrinks the visual viewport, not the layout one (iOS), so the
+// page is sized to the visual viewport and moved with it; the input stays just above the
+// keyboard, and a conversation that was at its end stays at its end.
 const vv = window.visualViewport;
 const fit = () => {
   if (!vv) return;
+  const feed = document.getElementById('feed');
+  const atEnd = !feed || feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
   const st = document.documentElement.style;
   st.setProperty('--vh', Math.round(vv.height) + 'px');
   st.setProperty('--vv-top', Math.round(vv.offsetTop) + 'px');
+  document.body.classList.toggle('keyboard', window.innerHeight - vv.height > 120);
+  if (feed && atEnd) requestAnimationFrame(() => (feed.scrollTop = feed.scrollHeight));
 };
+// focusing the input brings the keyboard up: follow it as it opens
+document.addEventListener('focusin', () => setTimeout(fit, 250));
+document.addEventListener('focusout', () => setTimeout(fit, 250));
 if (vv) {
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
