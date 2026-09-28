@@ -38,7 +38,12 @@ const serveWeb = (httpServer, dir) => {
       res.end(JSON.stringify({ ok: true, ts: new Date().toISOString() }));
       return;
     }
-    const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
+    // a folder is its index.html (/tui/ is the terminal-style client); /tui goes to /tui/
+    if (/^\/[a-z]+$/.test(pathname) && fs.existsSync(path.join(dir, pathname.slice(1), 'index.html'))) {
+      res.writeHead(301, { ...SECURITY, Location: pathname + '/' }).end();
+      return;
+    }
+    const rel = pathname === '/' ? 'index.html' : pathname.endsWith('/') ? pathname.slice(1) + 'index.html' : pathname.slice(1);
     const file = path.resolve(dir, rel);
     if (!file.startsWith(path.resolve(dir) + path.sep) && file !== path.resolve(dir, 'index.html')) {
       res.writeHead(403, SECURITY).end();
