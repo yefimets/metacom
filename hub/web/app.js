@@ -498,12 +498,10 @@ const foldReconnects = (list) => {
   }
   const out = [];
   let run = [];
+  // of each run of joined/left only each person's last stays: where they are now
   const flush = () => {
-    if (run.length < 3) out.push(...run);
-    else {
-      const names = [...new Set(run.map((m) => JOIN_LEFT.exec(m.text)[1]))].join(', ');
-      out.push({ ...run[run.length - 1], text: `${names} came and went ${run.length}× · ${run[0].ts.slice(11, 16)}–${run[run.length - 1].ts.slice(11, 16)}` });
-    }
+    const lastOf = new Map(run.map((m) => [JOIN_LEFT.exec(m.text)[1], m]));
+    out.push(...run.filter((m) => lastOf.get(JOIN_LEFT.exec(m.text)[1]) === m));
     run = [];
   };
   for (const m of list) {

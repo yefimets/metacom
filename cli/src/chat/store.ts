@@ -129,16 +129,13 @@ export const foldReconnects = (list: Message[]): Message[] => {
       open.delete(who!);
     }
   }
-  // what is left of a night of drops comes in runs between real messages: one line per run
+  // what is left of a night of drops comes in runs between real messages: of each run only the
+  // last joined or left of each person stays, which is where they are now
   const out: Message[] = [];
   let run: Message[] = [];
-  const hhmm = (m: Message) => m.ts.slice(11, 16);
   const flush = () => {
-    if (run.length < 3) out.push(...run);
-    else {
-      const names = [...new Set(run.map((m) => JOIN_LEFT.exec(m.text)![1]))].join(", ");
-      out.push({ ...run[run.length - 1]!, text: `${names} came and went ${run.length}× · ${hhmm(run[0]!)}–${hhmm(run[run.length - 1]!)}` });
-    }
+    const lastOf = new Map(run.map((m) => [JOIN_LEFT.exec(m.text)![1], m]));
+    out.push(...run.filter((m) => lastOf.get(JOIN_LEFT.exec(m.text)![1]!) === m));
     run = [];
   };
   for (const m of list) {
