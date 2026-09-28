@@ -12,7 +12,7 @@ import { Footer } from "@/chat/components/footer";
 import { SPIN_INTERVAL } from "@/chat/components/glyph";
 import { MessageLine, actionAt, bodyOf, type Action } from "@/chat/components/message";
 import { type Selection, isEmpty, textOf } from "@/chat/selection";
-import { bodyTextLines } from "@/chat/markdown";
+import { bodyTextLines, linkAt } from "@/chat/markdown";
 import { Note, Rule } from "@/chat/components/note";
 import { MemberPicker, RoomPicker, memberItems, pickerItems, type PickerItem } from "@/chat/components/rooms";
 import { Popup, type PopupItem, type PopupState } from "@/chat/components/popup";
@@ -346,6 +346,30 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
     return;
   }, []);
 
+  /// A link, file or name under a click in a message body.
+  const feedLink = useCallback((row: number, col: number): ({ url: string } | { file: string; media?: Media } | { name: string }) | undefined => {
+    const { log, width, members, me } = clickState.current;
+    const content = contentRef.current;
+    if (!content) return;
+    for (const [i, child] of content.childNodes.entries()) {
+      const entry = log[i];
+      if (entry?.type !== "message" || entry.msg.kind === "system") continue;
+      const inner = ((child as DOMElement).childNodes[0] as DOMElement | undefined) ?? (child as DOMElement);
+      const kids = inner.childNodes as unknown as DOMElement[];
+      const body = kids[kids.length - 2];
+      if (!body?.yogaNode) continue;
+      const at = screenAt(body);
+      const lines = bodyTextLines(bodyOf(entry.msg.text), width);
+      const n = row - 1 - at.top;
+      if (n < 0 || n >= lines.length) continue;
+      const files = (entry.msg.media ?? []).map((m) => m.name);
+      const hit = linkAt(lines, n, col - 1 - at.left, { files, isMember: (x) => members.has(x), me });
+      if (hit && "file" in hit) return { ...hit, media: entry.msg.media?.find((m) => m.name === hit.file) };
+      return hit;
+    }
+    return;
+  }, []);
+
   // A click on a sender or recipient in a message header of the feed. Each log entry is one
   // child of the content box, so the entry's header row is found from the laid-out tree.
   const feedName = useCallback((row: number, col: number): string | undefined => {
@@ -418,6 +442,18 @@ const Chat = ({ store, setTheme }: { store: Store; setTheme: (t: Theme) => void 
         editor.set("@");
         editor.end();
         store.setStatus(`forwarding ${msg.from?.name ?? "?"}'s message · pick who, or clear the @ and ← for another room · esc cancels`, "ok");
+        return refresh();
+      }
+      // inside a message: a web address opens in the browser, a file token or file name opens
+      // that attachment, a person's name goes into the input
+      const link = feedLink(row, col);
+      if (link) {
+        if ("url" in link) void store.openLink(link.url);
+        else if ("file" in link) {
+          const m = link.media;
+          if (m) void store.openMedia(m);
+          else store.setStatus(`${link.file} is not attached to this message`, "warn", 2500);
+        } else address(link.name);
         return refresh();
       }
       const name = feedName(row, col);

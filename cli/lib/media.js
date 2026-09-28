@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 
 const TYPES = {
   '.png': 'image/png',
@@ -126,6 +126,28 @@ const openFile = (file) => {
   }
 };
 
+/// A web address to the browser, without holding the chat up while the opener works (xdg-open
+/// with no desktop can hang): resolves true once the opener says yes, false when it fails.
+const openUrl = (url) =>
+  new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore', detached: true });
+    } catch {
+      return resolve(false);
+    }
+    const timer = setTimeout(() => resolve(false), 5000);
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0);
+    });
+    child.unref();
+  });
+
 /// The text on the clipboard, or ''. The same tools as the image below.
 const clipboardText = () => {
   const run = (cmd, args) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024, timeout: 5000 }).toString();
@@ -188,4 +210,4 @@ const clipboardImage = () => {
 /// ` [shot.png 12 KB]` for message lines.
 const describe = (media) => (Array.isArray(media) && media.length ? ' ' + media.map((m) => `[${m.name} ${pretty(m.size || 0)}]`).join(' ') : '');
 
-module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, saveAs, openFile, clipboardImage, clipboardText, copyText, describe, pretty };
+module.exports = { TYPES, MEDIA_DIR, typeOf, resolvePath, attachable, attachment, upload, download, saveAs, openFile, openUrl, clipboardImage, clipboardText, copyText, describe, pretty };

@@ -118,6 +118,9 @@
   /* unread pill: sits over the bottom of the stream, jumps to the first unread message */
   #unread { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 5; height: 32px; line-height: 30px; padding: 0 14px; }
   .msg { white-space: pre-wrap; word-break: break-word; padding: 3px 0; }
+  /* in the text: web addresses and attached files open, @names go into the input */
+  .msg a.link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+  .msg button.mention { padding: 0; font-weight: 700; text-decoration: underline dotted; text-underline-offset: 2px; }
   .msg .meta { color: var(--dim); font-size: 11px; }
   .msg .meta .from { color: var(--fg); }
   .msg .meta .to::before { content: " > "; color: var(--dim); }

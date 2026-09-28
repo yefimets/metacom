@@ -13,6 +13,7 @@ const media = require("../../lib/media.js") as {
   upload: (o: { http: string; token: string | null; file: string }) => Promise<Media>;
   saveAs: (o: { http: string; media: Media; dir?: string }) => Promise<string>;
   openFile: (file: string) => boolean;
+  openUrl: (url: string) => Promise<boolean>;
 };
 
 export type Media = { url: string; type: string; size: number; name: string };
@@ -646,6 +647,16 @@ export class Store {
     }
   }
 
+
+  /// A web address from a message, opened in the browser.
+  async openLink(url: string): Promise<void> {
+    if (!/^https?:\/\//.test(url)) return;
+    if (await media.openUrl(url)) this.setStatus(`opened ${url}`, "ok", 2500);
+    else {
+      this.copy(url);
+      this.setStatus(`no browser here · ${url} copied`, "warn", 3500);
+    }
+  }
 
   /// An attached file, saved to ~/Downloads and opened with the desktop's default app. Used by
   /// /open and by clicking the file's button under a message.

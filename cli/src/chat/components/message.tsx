@@ -73,7 +73,7 @@ const SpanText = ({ span }: { span: Span }) => {
           ? theme.colors.mutedForeground
           : undefined;
   return (
-    <Text color={tone} bold={span.bold || span.tone === "mention"} italic={span.italic}>
+    <Text color={span.tone === "link" ? theme.colors.info ?? theme.colors.accent : tone} bold={span.bold || span.tone === "mention"} italic={span.italic} underline={span.tone === "link"}>
       {span.text}
     </Text>
   );

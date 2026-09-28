@@ -287,6 +287,46 @@ $('screenType').addEventListener('keydown', (e) => {
   sendCommand(`!type ${text}`);
 });
 
+// The text of a message with what can be tapped made tappable, as in the terminal chat: a web
+// address opens in a new tab, a "[file.ext]" token or the name of an attached file opens that
+// file, "@name" of someone here puts them in the input. Everything else stays plain text.
+const LINKS = /https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]|\[[^[\]\n]{1,120}\.[a-z0-9]{1,6}\]|@[a-z0-9][a-z0-9._-]*[a-z0-9]/gi;
+const linkify = (text, media) => {
+  const frag = document.createDocumentFragment();
+  const files = new Map((media || []).map((f) => [f.name, f]));
+  let last = 0;
+  for (const m of text.matchAll(LINKS)) {
+    const word = m[0];
+    let node = null;
+    if (/^https?:/i.test(word)) {
+      node = el('a', 'link', word);
+      node.href = word;
+    } else if (word.startsWith('[')) {
+      const f = files.get(word.slice(1, -1));
+      if (f) {
+        node = el('a', 'link', word);
+        node.href = f.url;
+      }
+    } else {
+      const name = word.slice(1);
+      if (state.members.some((x) => x.name === name) && name !== (state.me && state.me.name)) {
+        node = el('button', 'mention', word);
+        node.type = 'button';
+        node.onclick = () => setMention(name);
+      }
+    }
+    if (!node) continue;
+    if (node.tagName === 'A') {
+      node.target = '_blank';
+      node.rel = 'noopener';
+    }
+    frag.append(document.createTextNode(text.slice(last, m.index)), node);
+    last = m.index + word.length;
+  }
+  frag.append(document.createTextNode(text.slice(last)));
+  return frag;
+};
+
 // Attached files under a message: images inline, anything else as a link.
 const renderMedia = (list) => {
   const box = el('div', 'media');
@@ -378,7 +418,7 @@ const renderMessage = (m) => {
   meta.append(document.createTextNode(`${m.ts.slice(11, 16)} `), el('span', 'from', m.from.name));
   if (m.to) meta.append(el('span', 'to', m.to));
   if (m.kind !== 'say' && m.kind !== 'command') meta.append(document.createTextNode(' '), el('span', 'kind', `[${m.kind}]`));
-  node.append(meta, document.createTextNode(m.text));
+  node.append(meta, linkify(m.text, m.media));
   if (Array.isArray(m.media) && m.media.length) node.append(renderMedia(m.media));
   stream.append(node);
   if (mine) {

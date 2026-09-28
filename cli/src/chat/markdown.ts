@@ -6,7 +6,7 @@ import { splitGraphemes, terminalWidth } from "@/lib/terminal-text";
 /// a list keeps its hanging indent, code keeps its colour, and the text stays selectable,
 /// because every line still knows exactly which characters it shows.
 
-export type Tone = "code" | "mention" | "muted" | "rule";
+export type Tone = "code" | "mention" | "muted" | "rule" | "link";
 export type Span = { text: string; bold?: boolean; italic?: boolean; tone?: Tone; name?: string };
 export type Line = { text: string; spans: Span[] };
 
@@ -20,6 +20,9 @@ const CODE = /`([^`\n]+)`/;
 const BOLD = /\*\*([^*\n]+)\*\*|__([^_\n]+)__/;
 const ITALIC = /(?:^|(?<=[^\w*]))\*([^*\n]+)\*(?![\w*])|(?:^|(?<=[^\w_]))_([^_\n]+)_(?![\w_])/;
 const MENTION = /(^|[^\w@])@([a-z0-9][a-z0-9._-]*)/giu;
+// What a click opens: a web address, or a file token as the chat writes it, "[image 2.png]".
+const URL_RE = /https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]/g;
+const FILE_TOKEN = /\[([^\[\]\n]{1,120}\.[a-z0-9]{1,6})\]/gi;
 
 type Style = { bold?: boolean; italic?: boolean; tone?: Tone };
 type IsMember = (name: string) => boolean;
@@ -27,6 +30,22 @@ type IsMember = (name: string) => boolean;
 const add = (out: Span[], text: string, style: Style, name?: string): void => {
   if (!text) return;
   out.push(name ? { text, ...style, name } : { text, ...style });
+};
+
+/// Web addresses and "[file.ext]" tokens, underlined: a click opens them. The rest goes on to
+/// the mentions.
+const links = (text: string, style: Style, isMember: IsMember): Span[] => {
+  const found = [...text.matchAll(URL_RE), ...text.matchAll(FILE_TOKEN)].sort((a, b) => a.index! - b.index!);
+  const out: Span[] = [];
+  let last = 0;
+  for (const m of found) {
+    if (m.index! < last) continue;
+    out.push(...mentions(text.slice(last, m.index), style, isMember));
+    add(out, m[0], { ...style, tone: "link" });
+    last = m.index! + m[0].length;
+  }
+  out.push(...mentions(text.slice(last), style, isMember));
+  return out;
 };
 
 /// @mentions of people who are actually here, so a name lights up in its own colour.
@@ -74,7 +93,49 @@ export const inline = (text: string, isMember: IsMember, style: Style = {}): Spa
       ...inline(text.slice(at + body.length + 2), isMember, style),
     ];
   }
-  return mentions(text, style, isMember);
+  return links(text, style, isMember);
+};
+
+export type LinkTarget = { url: string } | { file: string } | { name: string };
+
+/// What sits under a click in a message body: `lines` are the body's drawn lines, `row` the
+/// one clicked, `col` the terminal column within it. A web address (followed onto the next
+/// line when it wraps there), a "[file.ext]" token or a name of an attached file, or a person —
+/// "@name", or a bare name of someone here.
+export const linkAt = (lines: string[], row: number, col: number, ctx: { files: string[]; isMember: IsMember; me: string }): LinkTarget | undefined => {
+  const line = lines[row];
+  if (line === undefined || col < 0) return;
+  // the character under the column, counting wide characters as the terminal does
+  let at = -1;
+  let x = 0;
+  let i = 0;
+  for (const g of splitGraphemes(line)) {
+    const w = terminalWidth(g);
+    if (col >= x && col < x + Math.max(1, w)) {
+      at = i;
+      break;
+    }
+    x += w;
+    i += g.length;
+  }
+  if (at < 0) return;
+  const hit = (re: RegExp, text: string) => [...text.matchAll(re)].find((m) => m.index! <= at && at < m.index! + m[0].length);
+  // a web address that runs to the end of the line goes on at the start of the next one
+  const next = lines[row + 1] ?? "";
+  const joined = line + (/\S$/.test(line) && /^\S/.test(next) ? next.match(/^\S+/)![0] : "");
+  const url = hit(URL_RE, joined);
+  if (url) return { url: url[0] };
+  const token = hit(FILE_TOKEN, line);
+  if (token) return { file: token[1]! };
+  for (const f of ctx.files) {
+    for (let k = line.indexOf(f); k >= 0; k = line.indexOf(f, k + 1)) if (k <= at && at < k + f.length) return { file: f };
+  }
+  const word = hit(/@?[a-z0-9][a-z0-9._-]*/giu, line);
+  if (word) {
+    const name = word[0].replace(/^@/, "").replace(/[._-]+$/, "");
+    if (name !== ctx.me && ctx.isMember(name)) return { name };
+  }
+  return;
 };
 
 const widthOf = (spans: Span[]): number => spans.reduce((n, s) => n + terminalWidth(s.text), 0);
