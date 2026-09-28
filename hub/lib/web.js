@@ -39,7 +39,12 @@ const serveWeb = (httpServer, dir) => {
       res.end(JSON.stringify({ ok: true, ts: new Date().toISOString() }));
       return;
     }
-    // a folder is its index.html (/tui/ is the terminal-style client); /tui goes to /tui/
+    // the terminal-style client lived at /tui/ before it became the page: old links land on it
+    if (pathname === '/tui' || pathname.startsWith('/tui/')) {
+      res.writeHead(301, { ...SECURITY, Location: '/' }).end();
+      return;
+    }
+    // a folder is its index.html; /name goes to /name/
     if (/^\/[a-z]+$/.test(pathname) && fs.existsSync(path.join(dir, pathname.slice(1), 'index.html'))) {
       res.writeHead(301, { ...SECURITY, Location: pathname + '/' }).end();
       return;

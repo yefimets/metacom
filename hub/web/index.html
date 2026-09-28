@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#282c34">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="metacom">
@@ -12,250 +12,154 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon-180.png">
+<!--
+  The terminal chat (cli/src/chat), drawn in a browser: the same font, the same colours (termcn's
+  default theme on a One Dark terminal), the same lines — a coloured name and the time over the
+  text, ↩ reply ↪ forward under it, the members on the line above a rounded input with a ❯, the
+  hint under it, the room list in place of the conversation. Only what a terminal cannot do is
+  added: a rooms button under the input on a phone.
+-->
 <style>
+  /* JetBrains Mono, Ghostty's own font, served from the hub (fonts/, OFL): a phone has no copy,
+     and it is what the terminal chat is read in. Latin and Cyrillic, regular and bold, italic. */
+  @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family: "JetBrains Mono"; font-style: italic; font-weight: 400; font-display: swap; src: url(fonts/jetbrains-mono-latin-400-italic.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family: "JetBrains Mono"; font-style: italic; font-weight: 700; font-display: swap; src: url(fonts/jetbrains-mono-latin-700-italic.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/jetbrains-mono-cyrillic-400-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+  @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/jetbrains-mono-cyrillic-700-normal.woff2) format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
   :root {
-    --bg: #000;
-    --fg: #fff;
-    --dim: #888;
-    --faint: #333;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --bg: #282c34;
+    --fg: #ffffff;
+    --muted: #9ca3af;
+    --border: #4b5563;
+    --primary: #7c3aed;
+    --accent: #8b5cf6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --info: #3b82f6;
+    --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+    --gutter: 2ch;
   }
-  * { box-sizing: border-box; border-radius: 0 !important; -webkit-tap-highlight-color: transparent; }
-  /* iOS Safari inflates text in wide blocks ("font boosting"): the stream came out at ~24px
-     while the header stayed at 14. Pin the size. */
-  html { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-  /* The body is pinned to the visual viewport: app.js keeps --vh and --vv-top in step with
-     the on-screen keyboard on iOS, where the layout viewport does not shrink. */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { height: 100%; overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
-    font: 14px/1.45 var(--mono);
+    font: 14px/1.45 var(--mono); font-variant-ligatures: none;
+    /* light on dark, smoothed in grey as Ghostty and iOS do: Chrome and Firefox on a Mac draw
+       it heavier and rougher unless asked */
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility;
     position: fixed; top: 0; left: 0; width: 100%; height: var(--vh, 100dvh);
     transform: translateY(var(--vv-top, 0px));
     display: flex; flex-direction: column; overflow: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
-  ::selection { background: var(--fg); color: var(--bg); }
-  button, input, select, textarea { font: inherit; color: inherit; background: transparent; border: 0; outline: 0; margin: 0; appearance: none; -webkit-appearance: none; }
-  /* iOS Safari zooms the page when a focused field is set below 16px; keep fields at 16px on touch. */
-  @media (pointer: coarse) {
-    input, select, textarea { font-size: 16px; }
-    header .field > select { font-size: 16px; }
-  }
-  button { cursor: pointer; }
+  /* a phone: one smaller size for everything, the input included (maximum-scale=1 keeps iOS
+     from zooming in on a field under 16px) */
+  @media (max-width: 640px) { body { font-size: 12px; --gutter: 1ch; } }
+  body.keyboard { padding-bottom: 0; }
+  ::selection { background: var(--primary); color: #fff; }
+  button, textarea, input { font: inherit; color: inherit; background: none; border: 0; outline: 0; margin: 0; padding: 0; }
+  button { cursor: pointer; text-align: left; }
+  .muted { color: var(--muted); }
+  .b { font-weight: 700; }
+  .primary { color: var(--primary); }
+  .accent { color: var(--accent); }
+  .success { color: var(--success); }
+  .warning { color: var(--warning); }
+  .error { color: var(--error); }
 
-  /* logo: five pixel lines meeting in the centre. .spin makes it the loader. */
-  .logo { width: 28px; height: 28px; display: block; flex: 0 0 auto; fill: currentColor; }
-  #logo-def { position: absolute; width: 0; height: 0; overflow: hidden; }
-  .spin { animation: spin 1.6s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  /* the conversation, bottom-pinned like the terminal's scrollback */
+  #app { display: contents; }
+  #feed { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 1ch 0 var(--gutter); display: flex; flex-direction: column; }
+  #feed > .spacer { flex: 1; }
+  .entry { white-space: pre-wrap; word-break: break-word; }
+  .entry.message, .entry.note-keep { margin-bottom: 1.45em; }
+  .entry.system + .entry.system { margin-top: 0; }
+  .entry.system { margin-bottom: 0; }
+  .entry.system:last-child, .entry.system:has(+ .entry:not(.system)) { margin-bottom: 1.45em; }
+  .head .name, .name { font-weight: 700; }
+  .head .arrow { margin: 0 1ch; }
+  .actions { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .actions button { color: var(--muted); margin-right: 2ch; }
+  .actions button:hover { color: var(--fg); }
+  .body .code { color: var(--accent); }
+  .body .quote, .body .bullet, .body .rule { color: var(--muted); }
+  .body .line { min-height: 1.45em; }
+  .body .hang { display: block; padding-left: var(--hang, 0); text-indent: calc(-1 * var(--hang, 0)); }
+  .body a.link, .body button.link { color: var(--info); text-decoration: underline; text-underline-offset: 2px; }
+  .body button.mention { font-weight: 700; }
+  .banner { padding: 1.45em 1ch 1.45em 1ch; }
+  .rule-now { padding-left: 2ch; color: var(--muted); margin-bottom: 0; }
+  .block { padding-left: 2ch; margin-bottom: 1.45em; white-space: pre; overflow-x: auto; }
+  .screen { border-left: 1px solid var(--border); padding-left: 1ch; color: var(--muted); }
 
-  /* buttons: white block, black text, uppercase */
-  .btn {
-    background: var(--fg); color: var(--bg); border: 1px solid var(--fg);
-    padding: 0 12px; height: 36px; line-height: 34px; text-transform: uppercase; letter-spacing: .04em;
-    font-size: 12px; white-space: nowrap; user-select: none;
-  }
-  .btn:active { background: var(--bg); color: var(--fg); }
-  .btn:disabled { opacity: .35; }
-  .btn.ghost { background: var(--bg); color: var(--fg); }
-  .btn.ghost:active { background: var(--fg); color: var(--bg); }
+  /* the room list, in the conversation's place */
+  #rooms { flex: 1; min-height: 0; overflow-y: auto; padding: 0 1ch 0 var(--gutter); display: none; flex-direction: column; justify-content: flex-end; }
+  body.picking #rooms { display: flex; }
+  body.picking #feed { display: none; }
+  #rooms .title { color: var(--muted); margin-bottom: 1.45em; }
+  #rooms .row { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #rooms .row .room { display: inline-block; min-width: var(--nameW, 10ch); }
+  #rooms .row.active .room { color: var(--primary); font-weight: 700; }
+  #rooms .row .mark { color: var(--primary); display: inline-block; width: 2ch; }
 
-  /* terminal inputs: black, white border, prompt glyph in front */
-  .field { display: flex; align-items: stretch; border: 1px solid var(--fg); background: var(--bg); min-width: 0; }
-  .field > .prompt { padding: 0 0 0 10px; display: flex; align-items: center; color: var(--fg); user-select: none; }
-  .field > input, .field > textarea, .field > select { flex: 1; min-width: 0; padding: 8px 10px; caret-color: var(--fg); }
-  .field > textarea { resize: none; line-height: 1.4; max-height: 40dvh; }
-  .field > input::placeholder, .field > textarea::placeholder { color: var(--faint); }
-  .field > select { appearance: none; -webkit-appearance: none; padding-right: 26px; }
-  .field.select { position: relative; }
-  .field.select::after { content: "v"; position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--dim); pointer-events: none; font-size: 11px; }
-  .field:focus-within { box-shadow: inset 0 0 0 1px var(--fg); }
+  /* the line above the input */
+  /* Spacing is the terminal's grid: a row is 1.45em, a column 1ch. The live area sits in the
+     chat's gutter; the status line pads one column more, the hint two; the box's border rows are
+     half a row of air above and below the text inside it and around it. */
+  #status { display: flex; justify-content: space-between; gap: 2ch; padding: 0 1ch 0 calc(var(--gutter) + 1ch); white-space: nowrap; }
+  #status .who { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  #status .who button { margin-right: 3ch; }
+  #status .me { flex: 0 0 auto; color: var(--muted); }
+  #status .me .room { color: var(--fg); font-weight: 700; }
 
-  header {
-    display: flex; align-items: center; gap: 10px;
-    padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
-    border-bottom: 1px solid var(--fg);
-  }
-  header .title { font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  header .spacer { flex: 1; }
-  header #state { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-  header #state.on { color: var(--fg); }
-  header .field { height: 32px; flex: 0 1 auto; min-width: 0; }
-  header .field > select { padding: 0 26px 0 8px; font-size: 12px; text-transform: uppercase; text-overflow: ellipsis; }
+  /* the list over the input for @ and / */
+  #popup { padding-left: calc(var(--gutter) + 2ch); display: none; }
+  #popup.open { display: block; }
+  #popup .item { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #popup .item .mark { color: var(--primary); display: inline-block; width: 2ch; }
+  #popup .item.active .label { font-weight: 700; }
+  #popup .hint { color: var(--muted); }
 
-  /* agent strip */
-  #agents { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--fg); flex: 0 0 auto; }
-  #agents::-webkit-scrollbar { display: none; }
-  #agents:empty { display: none; }
-  .agent {
-    flex: 0 0 auto; min-width: 132px; max-width: 200px; padding: 10px 12px; border-right: 1px solid var(--fg);
-    display: flex; flex-direction: column; gap: 4px; position: relative;
-  }
-  .agent .name { display: flex; align-items: center; gap: 7px; font-weight: 700; letter-spacing: .02em; min-width: 0; }
-  .agent .name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .agent .glyph { width: 12px; height: 12px; display: inline-block; flex: 0 0 auto; }
-  .agent .glyph .logo { width: 12px; height: 12px; }
-  .agent .glyph.idle { border: 1px solid var(--fg); }
-  .agent .glyph.waiting { background: var(--fg); }
-  .agent .glyph.stopped { border: 1px solid var(--faint); }
-  .agent .glyph.starting { border: 1px dashed var(--fg); }
-  .agent .meta { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .agent .tag { position: absolute; top: 0; right: 0; font-size: 10px; padding: 1px 5px; text-transform: uppercase; letter-spacing: .06em; background: var(--fg); color: var(--bg); }
-  .agent.blocked { background: var(--fg); color: var(--bg); }
-  .agent.blocked .meta { color: #444; }
-  .agent.blocked .glyph { background: var(--bg); border: 0; }
-  .agent.blocked .tag { background: var(--bg); color: var(--fg); }
-  .agent.stopped { color: var(--dim); }
-  .agent .row { display: flex; gap: 6px; margin-top: 4px; }
-  .agent .row .btn { height: 26px; line-height: 24px; padding: 0 8px; font-size: 10px; }
-  @media (pointer: coarse) { .agent .row .btn { height: 32px; line-height: 30px; padding: 0 12px; } }
-  .agent.blocked .row .btn { background: var(--bg); color: var(--fg); border-color: var(--bg); }
-  .agent.selected { box-shadow: inset 0 -3px 0 0 var(--fg); }
-  .agent.blocked.selected { box-shadow: inset 0 -3px 0 0 var(--bg); }
+  /* the input: a rounded box, ❯ in the primary colour */
+  #composer { margin: 0.725em 1ch 0.725em var(--gutter); border: 1px solid var(--border); border-radius: 4px; padding: 0.725em 1ch; display: flex; align-items: flex-start; }
+  #composer:focus-within { border-color: #6b7280; }
+  #composer .prompt { color: var(--primary); font-weight: 700; flex: 0 0 2ch; line-height: 1.45; }
+  #text { flex: 1; resize: none; min-height: 1.45em; max-height: calc(6 * 1.45em); line-height: 1.45; overflow-y: auto; caret-color: var(--fg); }
+  #text::placeholder { color: var(--muted); opacity: 1; }
+  /* the terminal's cursor: a white block over the character, inverting it, blinking; the
+     browser's thin caret is hidden. Solid while typing, blinking once it rests. */
+  #composer { position: relative; }
+  #text { caret-color: transparent; }
+  #cursor { position: absolute; width: 1ch; height: 1.45em; background: #fff; mix-blend-mode: difference; pointer-events: none; display: none; }
+  #cursor.on { display: block; }
+  #cursor.rest { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  #mirror { position: absolute; visibility: hidden; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.45; top: 0; left: 0; }
 
-  /* stream */
-  #streamWrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
-  #stream { flex: 1; overflow-y: auto; padding: 8px 16px 12px; display: flex; flex-direction: column; gap: 2px; overscroll-behavior: contain; }
-  /* unread pill: sits over the bottom of the stream, jumps to the first unread message */
-  #unread { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 5; height: 32px; line-height: 30px; padding: 0 14px; }
-  .msg { white-space: pre-wrap; word-break: break-word; padding: 3px 0; }
-  /* in the text: web addresses and attached files open, @names go into the input */
-  .msg a.link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-  .msg button.mention { padding: 0; font-weight: 700; text-decoration: underline dotted; text-underline-offset: 2px; }
-  .msg .meta { color: var(--dim); font-size: 11px; }
-  .msg .meta .from { color: var(--fg); }
-  .msg .meta .to::before { content: " > "; color: var(--dim); }
-  .msg .meta .to { color: var(--fg); }
-  .msg .meta .kind { color: var(--dim); }
-  .msg.mine { border-left: 2px solid var(--fg); padding-left: 10px; }
-  .msg.system { color: var(--dim); font-size: 11px; }
-  .msg.system::before { content: "-- "; }
-  #stream .empty { color: var(--faint); margin: auto; text-align: center; }
+  /* the hint under it, and on a phone the rooms button */
+  #footer { display: flex; align-items: center; gap: 2ch; padding: 0 1ch 0 calc(var(--gutter) + 2ch); min-height: 1.45em; margin-bottom: 0.725em; }
+  #hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  #roomsBtn { display: none; flex: 0 0 auto; color: var(--muted); padding: 0; }
+  #roomsBtn:active { color: var(--fg); }
+  @media (max-width: 820px), (pointer: coarse) { #roomsBtn { display: inline-block; } }
 
-  /* composer */
-  #composer { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px); border-top: 1px solid var(--fg); }
-  /* with the keyboard up the home-indicator inset is under the keyboard, not under us */
-  body.keyboard #composer, body.keyboard #screen .keys { padding-bottom: 10px; }
-  #composer .line { display: flex; gap: 8px; align-items: stretch; }
-  #composer .field.text { flex: 1; }
-  #composer #send { flex: 0 0 auto; height: auto; min-height: 36px; }
-  #composer #attach { flex: 0 0 auto; height: auto; min-height: 36px; width: 36px; padding: 0; font-size: 18px; line-height: 34px; text-align: center; }
-  #composer #attach input { display: none; }
-  /* files queued for the next message: thumbnails with a corner × */
-  #files { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
-  #files::-webkit-scrollbar { display: none; }
-  #files .file { position: relative; flex: 0 0 auto; width: 56px; height: 56px; border: 1px solid var(--fg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  #files .file img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  #files .file .ext { font-size: 10px; text-transform: uppercase; color: var(--dim); padding: 0 4px; text-align: center; word-break: break-all; }
-  #files .file .x { position: absolute; top: 0; right: 0; width: 18px; height: 18px; line-height: 18px; text-align: center; background: var(--fg); color: var(--bg); font-size: 12px; }
-  body.dragging #composer { box-shadow: inset 0 0 0 2px var(--fg); }
-  /* attachments on messages */
-  .msg .media { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-  .msg .media img { max-width: min(100%, 320px); max-height: 240px; display: block; border: 1px solid var(--faint); }
-  .msg .media a { color: var(--fg); }
-  .msg .media a.doc { border: 1px solid var(--fg); padding: 4px 8px; font-size: 12px; text-decoration: none; }
-  /* who gets the message: "@" in the input opens the member list; a tap fills the mention in */
-  #mention { display: flex; flex-direction: column; border: 1px solid var(--fg); max-height: 40dvh; overflow-y: auto; }
-  #mention button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--faint); }
-  #mention button:last-child { border-bottom: 0; }
-  #mention button:active, #mention button.current { background: var(--fg); color: var(--bg); }
-  #mention button .name { font-weight: 700; }
-  #mention button .meta { color: var(--dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
-  #mention button.current .meta { color: #444; }
-
-  /* overlays */
-  .overlay { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; z-index: 10; }
-  .hidden { display: none !important; }
-  #screen pre {
-    flex: 1; margin: 0; padding: 12px 16px; overflow: auto; font-size: 11px; line-height: 1.35;
-    white-space: pre-wrap; word-break: break-all; color: var(--fg);
-  }
-  #screen .keys { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px); border-top: 1px solid var(--fg); }
-  #screen .keys .row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
-  #screen .keys .row::-webkit-scrollbar { display: none; }
-  #screen .keys .btn { flex: 0 0 auto; }
-  #screen header .btn { padding: 0 10px; }
-
-  #login { justify-content: center; align-items: stretch; padding: 24px; gap: 14px; }
-  #login .logo { width: 96px; height: 96px; margin: 0 auto 10px; }
-  #login h1 { margin: 0; text-align: center; font-size: 15px; letter-spacing: .3em; text-transform: uppercase; font-weight: 700; }
-  #login p { margin: 0; color: var(--dim); text-align: center; font-size: 12px; }
-  #login .btn { height: 44px; line-height: 42px; }
-  #login #loginError { color: var(--fg); min-height: 1.4em; }
-  #login #loginError:not(:empty)::before { content: "! "; }
-
-  #busy { position: fixed; top: calc(env(safe-area-inset-top) + 10px); right: 16px; z-index: 20; pointer-events: none; }
-  #busy .logo { width: 20px; height: 20px; }
-
-  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 90px); z-index: 30; background: var(--fg); color: var(--bg); padding: 8px 12px; font-size: 12px; }
-  #toast::before { content: "! "; }
+  /* sign in */
+  #login { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; justify-content: center; padding: 0 3ch; gap: 0.8em; z-index: 10; }
+  #login.hidden { display: none; }
+  #login .field { display: flex; border: 1px solid var(--border); border-radius: 0.6em; padding: 0.3em 1ch; }
+  #login .field .prompt { color: var(--primary); font-weight: 700; width: 2ch; }
+  #login .field input { flex: 1; }
+  #login input::placeholder { color: var(--muted); }
+  #login .go { color: var(--primary); font-weight: 700; align-self: flex-start; }
+  #loginError { color: var(--error); min-height: 1.45em; }
 </style>
 </head>
 <body>
-
-<svg id="logo-def" xmlns="http://www.w3.org/2000/svg">
-  <symbol id="mark" viewBox="0 0 21 21" shape-rendering="crispEdges">
-    <path d="M10 0h1v1h-1zM10 1h1v1h-1zM4 2h1v1h-1zM10 2h1v1h-1zM16 2h1v1h-1zM5 3h1v1h-1zM10 3h1v1h-1zM15 3h1v1h-1zM6 4h1v1h-1zM10 4h1v1h-1zM14 4h1v1h-1zM6 5h1v1h-1zM10 5h1v1h-1zM14 5h1v1h-1zM7 6h1v1h-1zM10 6h1v1h-1zM13 6h1v1h-1zM1 7h2v1h-2zM8 7h1v1h-1zM10 7h1v1h-1zM12 7h1v1h-1zM18 7h2v1h-2zM3 8h3v1h-3zM8 8h5v1h-5zM15 8h3v1h-3zM6 9h9v1h-9zM9 10h3v1h-3zM6 11h9v1h-9zM3 12h3v1h-3zM8 12h5v1h-5zM15 12h3v1h-3zM1 13h2v1h-2zM8 13h1v1h-1zM10 13h1v1h-1zM12 13h1v1h-1zM18 13h2v1h-2zM7 14h1v1h-1zM10 14h1v1h-1zM13 14h1v1h-1zM6 15h1v1h-1zM10 15h1v1h-1zM14 15h1v1h-1zM6 16h1v1h-1zM10 16h1v1h-1zM14 16h1v1h-1zM5 17h1v1h-1zM10 17h1v1h-1zM15 17h1v1h-1zM4 18h1v1h-1zM10 18h1v1h-1zM16 18h1v1h-1zM10 19h1v1h-1zM10 20h1v1h-1z"/>
-  </symbol>
-</svg>
-
-<header>
-  <svg class="logo" id="headLogo"><use href="#mark"/></svg>
-  <span class="title">metacom</span>
-  <span class="spacer"></span>
-  <span id="state" title="connection">offline</span>
-  <label class="field select"><select id="room" aria-label="room"></select></label>
-</header>
-
-<div id="agents"></div>
-<div id="streamWrap">
-  <div id="stream"><div class="empty">no messages</div></div>
-  <button id="unread" class="btn hidden" type="button"></button>
-</div>
-
-<form id="composer" autocomplete="off">
-  <div id="files" class="hidden"></div>
-  <div id="mention" class="hidden"></div>
-  <div class="line">
-    <label id="attach" class="btn ghost" title="attach a file">+<input id="fileInput" type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.zip,.log,.diff,.patch" multiple></label>
-    <label class="field text"><textarea id="text" rows="1" placeholder="@agent instruction · paste or drop an image" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></label>
-    <button id="send" class="btn" type="submit">send</button>
-  </div>
-</form>
-
-<div id="screen" class="overlay hidden">
-  <header>
-    <svg class="logo"><use href="#mark"/></svg>
-    <span class="title" id="screenTitle">screen</span>
-    <span class="spacer"></span>
-    <button id="screenRefresh" class="btn ghost" type="button">refresh</button>
-    <button id="screenClose" class="btn" type="button">close</button>
-  </header>
-  <pre id="screenText"></pre>
-  <div class="keys">
-    <div class="row">
-      <button class="btn" data-cmd="!keys enter">enter</button>
-      <button class="btn" data-cmd="!keys esc">esc</button>
-      <button class="btn" data-cmd="!keys y">y</button>
-      <button class="btn" data-cmd="!keys up">up</button>
-      <button class="btn" data-cmd="!keys down">down</button>
-      <button class="btn ghost" data-cmd="!cancel">cancel</button>
-    </div>
-    <label class="field"><span class="prompt">&gt;</span><input id="screenType" placeholder="type into agent" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
-  </div>
-</div>
-
-<div id="login" class="overlay">
-  <svg class="logo" id="loginLogo"><use href="#mark"/></svg>
-  <h1>metacom</h1>
-  <p>owner token. it stays in this browser.</p>
-  <label class="field"><span class="prompt">&gt;</span><input id="token" type="password" placeholder="token" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></label>
-  <button id="loginBtn" class="btn" type="button">connect</button>
-  <p id="loginError"></p>
-</div>
-
-<div id="busy" class="hidden"><svg class="logo spin"><use href="#mark"/></svg></div>
-<div id="toast" class="hidden"></div>
-
-<script src="/app.js"></script>
+<div id="app"></div>
+<script src="vendor/htm-preact.umd.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

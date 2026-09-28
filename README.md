@@ -162,17 +162,14 @@ typing into a terminal.
 
 ### Phone
 
-Open the hub URL in Safari, paste the owner token once (it stays in that browser), add to
-home screen. The client (`hub/web`, no build step) is black and white, zero radius: white
-block buttons, terminal inputs with a `>` prompt, and the mark, five lines meeting in the
-centre, is the logo and, spinning, the loader (header while reconnecting, corner
-while a call is in flight, inside an agent card while it works). Agents with status (inverted
-card when blocked on a question, *done* tag when a turn finished; live ones first, the ones
-that need you in front), the room stream, a composer addressed like the terminal chat (`@` pops
-the member list, `@Alex …` goes to that agent, `@room` to everyone, no mention lets the hub
-pick; tapping a card fills the mention in), and a *screen* button per agent that shows its terminal
-with Enter / Esc / y / arrows / Cancel keys and a `>` field that types into it. Long-press the
-logo to forget the token. On this Mac that is `http://127.0.0.1:8900/`; from a phone use the
+Open the hub URL in a browser, give the owner token and the name you go by once (they stay in
+that browser), add to home screen. The page (`hub/web`, Preact and htm from `hub/web/vendor`,
+no build step) is the terminal chat in a browser, phone or desktop: JetBrains Mono (served from
+`hub/web/fonts`), the chat's colours, a name in its colour over the text, ↩ reply ↪ forward
+under it, the members above a bordered input with a ❯ and a blinking block cursor, the `@` and
+`/` lists with the same keys, the hint under the input, the commands, and the room list in the
+conversation's place with counts and unread. Taps do what clicks and keys do; on a phone a
+`← rooms` link sits under the input. The old address `/tui/` leads here. On this Mac that is `http://127.0.0.1:8900/`; from a phone use the
 tunnel below.
 
 ### Telegram
