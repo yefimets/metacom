@@ -312,8 +312,15 @@ const Feed = () => {
   const s = useStore();
   const ref = useRef(null);
   const stick = useRef(true);
+  // before the browser paints: at the end when a room was just opened, or when the reader was
+  // already there — so a room appears at its end, never scrolling down into view
   useLayoutEffect(() => {
-    if (stick.current && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+    if (!ref.current) return;
+    if (S.scrollEnd) {
+      S.scrollEnd = false;
+      stick.current = true;
+    }
+    if (stick.current) ref.current.scrollTop = ref.current.scrollHeight;
   });
   const onScroll = () => {
     const f = ref.current;
@@ -390,13 +397,19 @@ const note = (text, tone = 'warn') => {
   push({ type: 'note', text, tone, ts: new Date().toISOString() });
 };
 
-const load = async () => {
+/// A room's conversation, built whole: banner, the last 30 real messages, the "now" rule.
+const conversation = (history) => {
   lastMessage.current = null;
-  set({ log: [] });
-  push({ type: 'banner' });
-  const history = foldReconnects(await S.hub.call('room/history', { room: S.room, limit: 300 })).slice(-30);
-  for (const m of history) pushMessage(m);
-  if (history.length) push({ type: 'rule' });
+  const list = foldReconnects(history).slice(-30);
+  const entries = [{ type: 'banner' }, ...list.map((m) => ({ type: 'message', msg: m, grouped: grouped(m) })), ...(list.length ? [{ type: 'rule' }] : [])];
+  return entries.map((e) => ({ ...e, id: `e${++seq}` }));
+};
+
+// The room's history, fetched before anything changes on screen, then shown in one step and at
+// its end: no empty feed, no messages arriving one by one, no scrolling down into view.
+const load = async () => {
+  const history = await S.hub.call('room/history', { room: S.room, limit: 300 });
+  set({ log: conversation(history), scrollEnd: true });
   markRead();
 };
 
@@ -954,8 +967,9 @@ const closePicker = () => {
   set({ picker: null });
   setText('');
 };
+// the list stays until the room is ready, then the room replaces it in one step
 const pick = async (item) => {
-  closePicker();
+  if (item.room === S.room) return closePicker();
   await switchRoom(item.room);
 };
 const pickerKey = (e) => {
@@ -976,24 +990,27 @@ const pickerKey = (e) => {
   }
 };
 
+// Another room: joined and its history fetched while this one (or the room list) stays on
+// screen, then room, members, conversation and address change in one render, at its end.
 const switchRoom = async (room, { fromHistory = false } = {}) => {
   if (room === S.room) return;
   if (!ROOM.test(room)) return note('a room name is letters, digits, dot, dash or underscore', 'warn');
-  set({ room });
+  const [history] = await Promise.all([S.hub.call('room/history', { room, limit: 300 }), join(room)]);
   saved.set('tui.room', room);
   if (!fromHistory) showRoom(room);
-  await join();
-  members(S.all);
-  await load();
+  S.room = room;
+  set({ room, members: roomMembers(S.all), log: conversation(history), scrollEnd: true, picker: null, text: '', popup: { kind: null, items: [], index: 0 } });
+  markRead();
 };
 
 // MARK: members
 
-const members = (list) => set({ all: list, members: new Map(list.filter((m) => m.room === S.room).map((m) => [m.name, m])) });
+const roomMembers = (list) => new Map(list.filter((m) => m.room === S.room).map((m) => [m.name, m]));
+const members = (list) => set({ all: list, members: roomMembers(list) });
 
-const join = async () => {
-  await S.hub.call('agents/register', { name: S.me.name, room: S.room, kind: 'human', host: 'web' });
-  await S.hub.call('room/join', { room: S.room });
+const join = async (room = S.room) => {
+  await S.hub.call('agents/register', { name: S.me.name, room, kind: 'human', host: 'web' });
+  await S.hub.call('room/join', { room });
   await S.hub.call('agents/status', { status: 'waiting' }).catch(() => {});
 };
 
