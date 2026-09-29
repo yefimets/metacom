@@ -315,12 +315,21 @@ const Feed = () => {
   // before the browser paints: at the end when a room was just opened, or when the reader was
   // already there — so a room appears at its end, never scrolling down into view
   useLayoutEffect(() => {
-    if (!ref.current) return;
-    if (S.scrollEnd) {
+    const f = ref.current;
+    if (!f) return;
+    const opened = S.scrollEnd;
+    if (opened) {
       S.scrollEnd = false;
       stick.current = true;
     }
-    if (stick.current) ref.current.scrollTop = ref.current.scrollHeight;
+    if (!stick.current) return;
+    f.scrollTop = f.scrollHeight;
+    // and again once the layout has settled: the first frame and the web font can still change
+    // how tall the conversation is
+    if (opened) {
+      requestAnimationFrame(() => stick.current && (f.scrollTop = f.scrollHeight));
+      document.fonts?.ready.then(() => stick.current && (f.scrollTop = f.scrollHeight));
+    }
   });
   const onScroll = () => {
     const f = ref.current;
